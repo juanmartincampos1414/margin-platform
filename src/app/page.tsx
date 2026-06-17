@@ -22,7 +22,7 @@ export default function LandingPage() {
         <h1 className="text-5xl font-bold leading-tight mb-6">
           No es solo software.<br />
           Es el <span className="text-indigo-400">sistema nervioso</span><br />
-          de tu negocio.
+          de tu negocio gastronómico.
         </h1>
         <p className="text-slate-400 text-xl mb-10 max-w-2xl mx-auto">
           Entendé el margen real de cada plato. Tomá decisiones sobre lo que importa.
