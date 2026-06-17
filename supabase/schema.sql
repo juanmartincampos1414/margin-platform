@@ -1,0 +1,266 @@
+-- Enable UUID extension
+create extension if not exists "uuid-ossp";
+
+-- =====================
+-- RESTAURANTS (tenants)
+-- =====================
+create table public.restaurants (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  owner_email text not null unique,
+  logo_url text,
+  plan text not null default 'trial' check (plan in ('trial', 'basic', 'pro', 'enterprise')),
+  active boolean not null default true,
+  settings jsonb default '{}',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+-- =====================
+-- PROFILES (users linked to restaurants)
+-- =====================
+create table public.profiles (
+  id uuid primary key references auth.users on delete cascade,
+  restaurant_id uuid references public.restaurants on delete cascade,
+  full_name text,
+  role text not null default 'owner' check (role in ('owner', 'manager', 'staff', 'admin')),
+  avatar_url text,
+  created_at timestamptz default now()
+);
+
+-- =====================
+-- CATEGORIES
+-- =====================
+create table public.categories (
+  id uuid primary key default uuid_generate_v4(),
+  restaurant_id uuid references public.restaurants on delete cascade,
+  name text not null,
+  color text default '#6366f1',
+  created_at timestamptz default now()
+);
+
+-- =====================
+-- INGREDIENTS / PRODUCTS
+-- =====================
+create table public.ingredients (
+  id uuid primary key default uuid_generate_v4(),
+  restaurant_id uuid references public.restaurants on delete cascade,
+  name text not null,
+  brand text,
+  unit text not null default 'kg' check (unit in ('kg', 'gr', 'lt', 'ml', 'un', 'doc')),
+  price_per_unit numeric(12,2) not null default 0,
+  stock_level text default 'medium' check (stock_level in ('high', 'medium', 'low', 'out')),
+  category_id uuid references public.categories,
+  last_updated timestamptz default now(),
+  created_at timestamptz default now()
+);
+
+-- =====================
+-- RECIPES
+-- =====================
+create table public.recipes (
+  id uuid primary key default uuid_generate_v4(),
+  restaurant_id uuid references public.restaurants on delete cascade,
+  name text not null,
+  description text,
+  image_url text,
+  category_id uuid references public.categories,
+  servings integer not null default 1,
+  sale_price numeric(12,2) not null default 0,
+  status text not null default 'active' check (status in ('active', 'inactive', 'draft')),
+  tags text[] default '{}',
+  notes text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+-- =====================
+-- RECIPE INGREDIENTS (line items)
+-- =====================
+create table public.recipe_ingredients (
+  id uuid primary key default uuid_generate_v4(),
+  recipe_id uuid references public.recipes on delete cascade,
+  ingredient_id uuid references public.ingredients on delete restrict,
+  quantity numeric(10,3) not null,
+  unit text not null,
+  created_at timestamptz default now()
+);
+
+-- =====================
+-- INVOICES (OCR)
+-- =====================
+create table public.invoices (
+  id uuid primary key default uuid_generate_v4(),
+  restaurant_id uuid references public.restaurants on delete cascade,
+  file_url text not null,
+  file_name text,
+  supplier_name text,
+  supplier_cuit text,
+  invoice_number text,
+  invoice_date date,
+  total_amount numeric(14,2),
+  currency text default 'ARS',
+  status text not null default 'processing' check (status in ('processing', 'processed', 'error', 'reviewed')),
+  extracted_data jsonb default '{}',
+  ocr_confidence numeric(5,2),
+  created_at timestamptz default now(),
+  processed_at timestamptz
+);
+
+-- =====================
+-- INVOICE LINE ITEMS
+-- =====================
+create table public.invoice_items (
+  id uuid primary key default uuid_generate_v4(),
+  invoice_id uuid references public.invoices on delete cascade,
+  ingredient_id uuid references public.ingredients,
+  product_name text not null,
+  quantity numeric(10,3),
+  unit text,
+  unit_price numeric(12,2),
+  subtotal numeric(14,2),
+  previous_price numeric(12,2),
+  price_change_pct numeric(6,2),
+  created_at timestamptz default now()
+);
+
+-- =====================
+-- AI RECOMMENDATIONS
+-- =====================
+create table public.ai_recommendations (
+  id uuid primary key default uuid_generate_v4(),
+  restaurant_id uuid references public.restaurants on delete cascade,
+  recipe_id uuid references public.recipes on delete cascade,
+  type text not null check (type in ('negotiate_supplier', 'adjust_price', 'review_ingredient', 'menu_mix')),
+  title text not null,
+  description text not null,
+  estimated_impact_pp numeric(6,2),
+  priority text default 'medium' check (priority in ('high', 'medium', 'low')),
+  status text default 'pending' check (status in ('pending', 'applied', 'dismissed')),
+  created_at timestamptz default now()
+);
+
+-- =====================
+-- SALES LOG (for menu mix analysis)
+-- =====================
+create table public.sales_log (
+  id uuid primary key default uuid_generate_v4(),
+  restaurant_id uuid references public.restaurants on delete cascade,
+  recipe_id uuid references public.recipes on delete cascade,
+  quantity integer not null default 1,
+  channel text default 'salon' check (channel in ('salon', 'delivery', 'takeaway')),
+  sale_date date not null default current_date,
+  created_at timestamptz default now()
+);
+
+-- =====================
+-- RLS POLICIES
+-- =====================
+alter table public.restaurants enable row level security;
+alter table public.profiles enable row level security;
+alter table public.categories enable row level security;
+alter table public.ingredients enable row level security;
+alter table public.recipes enable row level security;
+alter table public.recipe_ingredients enable row level security;
+alter table public.invoices enable row level security;
+alter table public.invoice_items enable row level security;
+alter table public.ai_recommendations enable row level security;
+alter table public.sales_log enable row level security;
+
+-- Profiles: users see their own profile
+create policy "Users can view own profile" on public.profiles
+  for select using (auth.uid() = id);
+
+create policy "Users can update own profile" on public.profiles
+  for update using (auth.uid() = id);
+
+-- Helper function: get restaurant_id for current user
+create or replace function public.get_my_restaurant_id()
+returns uuid language sql security definer as $$
+  select restaurant_id from public.profiles where id = auth.uid()
+$$;
+
+-- Restaurant: only own restaurant
+create policy "Users see own restaurant" on public.restaurants
+  for select using (id = public.get_my_restaurant_id());
+
+create policy "Users update own restaurant" on public.restaurants
+  for update using (id = public.get_my_restaurant_id());
+
+-- Generic tenant policy macro for all other tables
+create policy "Tenant isolation - categories" on public.categories
+  for all using (restaurant_id = public.get_my_restaurant_id());
+
+create policy "Tenant isolation - ingredients" on public.ingredients
+  for all using (restaurant_id = public.get_my_restaurant_id());
+
+create policy "Tenant isolation - recipes" on public.recipes
+  for all using (restaurant_id = public.get_my_restaurant_id());
+
+create policy "Tenant isolation - recipe_ingredients" on public.recipe_ingredients
+  for all using (
+    recipe_id in (select id from public.recipes where restaurant_id = public.get_my_restaurant_id())
+  );
+
+create policy "Tenant isolation - invoices" on public.invoices
+  for all using (restaurant_id = public.get_my_restaurant_id());
+
+create policy "Tenant isolation - invoice_items" on public.invoice_items
+  for all using (
+    invoice_id in (select id from public.invoices where restaurant_id = public.get_my_restaurant_id())
+  );
+
+create policy "Tenant isolation - ai_recommendations" on public.ai_recommendations
+  for all using (restaurant_id = public.get_my_restaurant_id());
+
+create policy "Tenant isolation - sales_log" on public.sales_log
+  for all using (restaurant_id = public.get_my_restaurant_id());
+
+-- =====================
+-- FUNCTIONS
+-- =====================
+
+-- Auto-update updated_at
+create or replace function public.handle_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create trigger recipes_updated_at before update on public.recipes
+  for each row execute function public.handle_updated_at();
+
+create trigger restaurants_updated_at before update on public.restaurants
+  for each row execute function public.handle_updated_at();
+
+-- Auto-create profile on signup
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer as $$
+begin
+  insert into public.profiles (id, full_name)
+  values (new.id, new.raw_user_meta_data->>'full_name');
+  return new;
+end;
+$$;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- Computed: recipe cost
+create or replace function public.get_recipe_cost(recipe_uuid uuid)
+returns numeric language sql security definer as $$
+  select coalesce(sum(
+    ri.quantity * i.price_per_unit /
+    case
+      when ri.unit = 'gr' and i.unit = 'kg' then 1000
+      when ri.unit = 'ml' and i.unit = 'lt' then 1000
+      else 1
+    end
+  ), 0)
+  from public.recipe_ingredients ri
+  join public.ingredients i on i.id = ri.ingredient_id
+  where ri.recipe_id = recipe_uuid
+$$;
