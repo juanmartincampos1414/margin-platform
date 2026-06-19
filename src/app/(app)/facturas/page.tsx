@@ -3,16 +3,18 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 
 const statusLabels: Record<string, string> = {
+  uploaded: 'Subida',
   processing: 'Procesando',
-  processed: 'Procesado',
-  error: 'Error',
-  reviewed: 'Revisado',
+  processed: 'Procesada',
+  review_required: 'Revisión requerida',
+  failed: 'Falló',
 }
 const statusColors: Record<string, string> = {
+  uploaded: 'bg-slate-100 text-slate-600',
   processing: 'bg-yellow-100 text-yellow-700',
-  processed: 'bg-blue-100 text-blue-700',
-  error: 'bg-red-100 text-red-700',
-  reviewed: 'bg-emerald-100 text-emerald-700',
+  processed: 'bg-emerald-100 text-emerald-700',
+  review_required: 'bg-orange-100 text-orange-700',
+  failed: 'bg-red-100 text-red-700',
 }
 
 export default async function FacturasPage() {

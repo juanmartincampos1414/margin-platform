@@ -8,10 +8,13 @@ import { formatCurrency } from '@/lib/utils'
 interface Ingredient {
   id: string
   name: string
+  normalized_name?: string
   brand?: string
   unit: string
-  price_per_unit: number
+  current_price: number
   stock_level: string
+  status: string
+  suppliers?: { id: string; name: string } | null
 }
 
 interface Props {
@@ -27,6 +30,13 @@ const stockColors: Record<string, string> = {
   out: 'bg-red-100 text-red-700',
 }
 const stockLabels: Record<string, string> = { high: 'Alto', medium: 'Medio', low: 'Bajo', out: 'Sin stock' }
+const statusColors: Record<string, string> = {
+  draft: 'bg-orange-100 text-orange-700',
+  validated: 'bg-emerald-100 text-emerald-700',
+  merged: 'bg-slate-100 text-slate-500',
+  archived: 'bg-slate-100 text-slate-400',
+}
+const statusLabels: Record<string, string> = { draft: 'Borrador', validated: 'Validado', merged: 'Fusionado', archived: 'Archivado' }
 
 export default function IngredientsClient({ ingredients: initial, restaurantId }: Props) {
   const router = useRouter()
@@ -34,7 +44,7 @@ export default function IngredientsClient({ ingredients: initial, restaurantId }
   const [search, setSearch] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState({ name: '', brand: '', unit: 'kg', price_per_unit: '', stock_level: 'medium' })
+  const [form, setForm] = useState({ name: '', brand: '', unit: 'kg', current_price: '', stock_level: 'medium' })
   const [saving, setSaving] = useState(false)
 
   const filtered = ingredients.filter(i =>
@@ -43,13 +53,13 @@ export default function IngredientsClient({ ingredients: initial, restaurantId }
   )
 
   function openNew() {
-    setForm({ name: '', brand: '', unit: 'kg', price_per_unit: '', stock_level: 'medium' })
+    setForm({ name: '', brand: '', unit: 'kg', current_price: '', stock_level: 'medium' })
     setEditingId(null)
     setShowForm(true)
   }
 
   function openEdit(ing: Ingredient) {
-    setForm({ name: ing.name, brand: ing.brand || '', unit: ing.unit, price_per_unit: String(ing.price_per_unit), stock_level: ing.stock_level })
+    setForm({ name: ing.name, brand: ing.brand || '', unit: ing.unit, current_price: String(ing.current_price), stock_level: ing.stock_level })
     setEditingId(ing.id)
     setShowForm(true)
   }
@@ -57,14 +67,19 @@ export default function IngredientsClient({ ingredients: initial, restaurantId }
   async function handleSave() {
     if (!form.name || !restaurantId) return
     setSaving(true)
-    const supabase = createClient()
-    const payload = { name: form.name, brand: form.brand || null, unit: form.unit, price_per_unit: parseFloat(form.price_per_unit) || 0, stock_level: form.stock_level }
+    const payload = { name: form.name, brand: form.brand || null, unit: form.unit, current_price: parseFloat(form.current_price) || 0, stock_level: form.stock_level }
 
     if (editingId) {
-      const { data } = await supabase.from('ingredients').update(payload).eq('id', editingId).select().single()
-      if (data) setIngredients(prev => prev.map(i => i.id === editingId ? data : i))
+      const res = await fetch(`/api/ingredients/${editingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, status: 'validated' }),
+      })
+      const data = await res.json()
+      if (res.ok) setIngredients(prev => prev.map(i => i.id === editingId ? { ...i, ...data } : i))
     } else {
-      const { data } = await supabase.from('ingredients').insert({ ...payload, restaurant_id: restaurantId }).select().single()
+      const supabase = createClient()
+      const { data } = await supabase.from('ingredients').insert({ ...payload, restaurant_id: restaurantId, status: 'validated' }).select().single()
       if (data) setIngredients(prev => [...prev, data])
     }
     setSaving(false)
@@ -111,8 +126,10 @@ export default function IngredientsClient({ ingredients: initial, restaurantId }
             <thead className="bg-slate-50">
               <tr>
                 <th className="text-left px-4 py-3 text-slate-500 font-medium">Ingrediente</th>
+                <th className="text-left px-4 py-3 text-slate-500 font-medium">Proveedor</th>
                 <th className="text-right px-4 py-3 text-slate-500 font-medium">Unidad</th>
                 <th className="text-right px-4 py-3 text-slate-500 font-medium">Precio/unidad</th>
+                <th className="text-center px-4 py-3 text-slate-500 font-medium">Estado</th>
                 <th className="text-center px-4 py-3 text-slate-500 font-medium">Stock</th>
                 <th className="px-4 py-3"></th>
               </tr>
@@ -122,10 +139,19 @@ export default function IngredientsClient({ ingredients: initial, restaurantId }
                 <tr key={ing.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3">
                     <p className="font-medium text-slate-800">{ing.name}</p>
+                    {ing.normalized_name && ing.normalized_name !== ing.name && (
+                      <p className="text-slate-400 text-xs">→ {ing.normalized_name}</p>
+                    )}
                     {ing.brand && <p className="text-slate-400 text-xs">{ing.brand}</p>}
                   </td>
+                  <td className="px-4 py-3 text-slate-600">{ing.suppliers?.name || '—'}</td>
                   <td className="px-4 py-3 text-right text-slate-600">{ing.unit}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(ing.price_per_unit)}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(ing.current_price)}</td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColors[ing.status] || statusColors.draft}`}>
+                      {statusLabels[ing.status] || ing.status}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-center">
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${stockColors[ing.stock_level] || stockColors.medium}`}>
                       {stockLabels[ing.stock_level] || ing.stock_level}
@@ -167,7 +193,7 @@ export default function IngredientsClient({ ingredients: initial, restaurantId }
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Precio por unidad ($)</label>
-                  <input type="number" value={form.price_per_unit} onChange={e => setForm(f => ({ ...f, price_per_unit: e.target.value }))} placeholder="2.550" className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500" />
+                  <input type="number" value={form.current_price} onChange={e => setForm(f => ({ ...f, current_price: e.target.value }))} placeholder="2.550" className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500" />
                 </div>
               </div>
               <div>

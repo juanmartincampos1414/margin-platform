@@ -20,7 +20,7 @@ export default async function RecetasPage() {
       id, name, sale_price, status, tags, image_url,
       recipe_ingredients(
         quantity, unit,
-        ingredients(price_per_unit, unit)
+        ingredients(current_price, unit)
       )
     `)
     .eq('restaurant_id', profile?.restaurant_id)
@@ -31,7 +31,7 @@ export default async function RecetasPage() {
       if (!ri.ingredients) return sum
       const ratio = (ri.unit === 'gr' && ri.ingredients.unit === 'kg') ||
                     (ri.unit === 'ml' && ri.ingredients.unit === 'lt') ? 1000 : 1
-      return sum + (ri.quantity * ri.ingredients.price_per_unit / ratio)
+      return sum + (ri.quantity * ri.ingredients.current_price / ratio)
     }, 0)
   }
 

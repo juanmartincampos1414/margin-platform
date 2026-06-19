@@ -42,15 +42,23 @@ export default function UploadInvoice({ restaurantId }: Props) {
     setLoading(true)
     setError('')
 
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('restaurantId', restaurantId)
-
     try {
-      const res = await fetch('/api/ocr', { method: 'POST', body: formData })
-      if (!res.ok) throw new Error('Error al procesar la factura')
-      const data = await res.json()
-      setResult(data)
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('restaurantId', restaurantId)
+
+      const uploadRes = await fetch('/api/invoices/upload', { method: 'POST', body: formData })
+      if (!uploadRes.ok) throw new Error((await uploadRes.json()).error || 'Error al subir la factura')
+      const { invoiceId } = await uploadRes.json()
+
+      const processRes = await fetch('/api/invoices/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId }),
+      })
+      if (!processRes.ok) throw new Error((await processRes.json()).error || 'Error al procesar la factura')
+      const data = await processRes.json()
+      setResult({ ...data, invoiceId, items: data.items?.map((i: any) => ({ ...i, product_name: i.ingredient_name })) })
     } catch (e: any) {
       setError(e.message)
     } finally {

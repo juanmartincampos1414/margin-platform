@@ -15,7 +15,7 @@ export default async function IngredientsPage() {
 
   const { data: ingredients } = await supabase
     .from('ingredients')
-    .select('*')
+    .select('*, suppliers(id, name)')
     .eq('restaurant_id', profile?.restaurant_id)
     .order('name')
 

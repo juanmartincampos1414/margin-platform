@@ -22,7 +22,7 @@ export default async function RecipeDetailPage({ params }: { params: Promise<{ i
       id, name, sale_price, status, servings, description, tags,
       recipe_ingredients(
         id, quantity, unit,
-        ingredients(id, name, price_per_unit, unit, brand)
+        ingredients(id, name, current_price, unit, brand)
       )
     `)
     .eq('id', id)
@@ -35,7 +35,7 @@ export default async function RecipeDetailPage({ params }: { params: Promise<{ i
     if (!ri.ingredients) return 0
     const ratio = (ri.unit === 'gr' && ri.ingredients.unit === 'kg') ||
                   (ri.unit === 'ml' && ri.ingredients.unit === 'lt') ? 1000 : 1
-    return ri.quantity * ri.ingredients.price_per_unit / ratio
+    return ri.quantity * ri.ingredients.current_price / ratio
   }
 
   const totalCost = (recipe.recipe_ingredients || []).reduce((s: number, ri: any) => s + calcLineCost(ri), 0)
@@ -103,7 +103,7 @@ export default async function RecipeDetailPage({ params }: { params: Promise<{ i
                         {ri.ingredients?.brand && <span className="text-slate-400 text-xs ml-1">· {ri.ingredients.brand}</span>}
                       </td>
                       <td className="py-3 text-right text-slate-600">{ri.quantity} {ri.unit}</td>
-                      <td className="py-3 text-right text-slate-600">{formatCurrency(ri.ingredients?.price_per_unit || 0)}/{ri.ingredients?.unit}</td>
+                      <td className="py-3 text-right text-slate-600">{formatCurrency(ri.ingredients?.current_price || 0)}/{ri.ingredients?.unit}</td>
                       <td className="py-3 text-right font-semibold text-slate-800">{formatCurrency(cost)}</td>
                       <td className="py-3 text-right">
                         <span className={`text-xs px-2 py-0.5 rounded-full ${pct > 40 ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'}`}>

@@ -9,7 +9,7 @@ interface Ingredient {
   id: string
   name: string
   unit: string
-  price_per_unit: number
+  current_price: number
   brand?: string
 }
 
@@ -18,7 +18,7 @@ interface LineItem {
   name: string
   quantity: number
   unit: string
-  price_per_unit: number
+  current_price: number
   base_unit: string
 }
 
@@ -33,7 +33,7 @@ const UNIT_OPTIONS = ['gr', 'kg', 'ml', 'lt', 'un', 'doc']
 function calcLineCost(li: LineItem): number {
   const ratio = (li.unit === 'gr' && li.base_unit === 'kg') ||
                 (li.unit === 'ml' && li.base_unit === 'lt') ? 1000 : 1
-  return li.quantity * li.price_per_unit / ratio
+  return li.quantity * li.current_price / ratio
 }
 
 export default function RecipeForm({ ingredients, restaurantId, recipe }: Props) {
@@ -48,7 +48,7 @@ export default function RecipeForm({ ingredients, restaurantId, recipe }: Props)
     name: ri.ingredients?.name || '',
     quantity: ri.quantity,
     unit: ri.unit,
-    price_per_unit: ri.ingredients?.price_per_unit || 0,
+    current_price: ri.ingredients?.current_price || 0,
     base_unit: ri.ingredients?.unit || 'kg',
   })) || [])
   const [saving, setSaving] = useState(false)
@@ -69,7 +69,7 @@ export default function RecipeForm({ ingredients, restaurantId, recipe }: Props)
       name: ing.name,
       quantity: 100,
       unit: ing.unit === 'kg' ? 'gr' : ing.unit === 'lt' ? 'ml' : ing.unit,
-      price_per_unit: ing.price_per_unit,
+      current_price: ing.current_price,
       base_unit: ing.unit,
     }])
     setSearch('')
@@ -166,7 +166,7 @@ export default function RecipeForm({ ingredients, restaurantId, recipe }: Props)
                   className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 text-left"
                 >
                   <span className="text-slate-800 text-sm">{ing.name} {ing.brand && <span className="text-slate-400">· {ing.brand}</span>}</span>
-                  <span className="text-slate-500 text-xs">{formatCurrency(ing.price_per_unit)}/{ing.unit}</span>
+                  <span className="text-slate-500 text-xs">{formatCurrency(ing.current_price)}/{ing.unit}</span>
                 </button>
               ))}
             </div>
@@ -201,7 +201,7 @@ export default function RecipeForm({ ingredients, restaurantId, recipe }: Props)
                   >
                     {UNIT_OPTIONS.map(u => <option key={u}>{u}</option>)}
                   </select>
-                  <span className="col-span-2 text-xs text-slate-500">{formatCurrency(li.price_per_unit)}/{li.base_unit}</span>
+                  <span className="col-span-2 text-xs text-slate-500">{formatCurrency(li.current_price)}/{li.base_unit}</span>
                   <span className="col-span-1 text-sm font-medium text-slate-800">{formatCurrency(calcLineCost(li))}</span>
                   <button onClick={() => removeLine(idx)} className="col-span-1 text-slate-400 hover:text-red-500 text-center transition-colors">×</button>
                 </div>

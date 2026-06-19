@@ -20,7 +20,7 @@ export default async function EditarRecetaPage({ params }: { params: Promise<{ i
       id, name, sale_price, servings, status,
       recipe_ingredients(
         id, quantity, unit, ingredient_id,
-        ingredients(id, name, price_per_unit, unit, brand)
+        ingredients(id, name, current_price, unit, brand)
       )
     `)
     .eq('id', id)
@@ -31,7 +31,7 @@ export default async function EditarRecetaPage({ params }: { params: Promise<{ i
 
   const { data: ingredients } = await supabase
     .from('ingredients')
-    .select('id, name, unit, price_per_unit, brand')
+    .select('id, name, unit, current_price, brand')
     .eq('restaurant_id', profile?.restaurant_id)
     .order('name')
 

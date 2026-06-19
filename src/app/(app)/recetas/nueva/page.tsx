@@ -15,7 +15,7 @@ export default async function NuevaRecetaPage() {
 
   const { data: ingredients } = await supabase
     .from('ingredients')
-    .select('id, name, unit, price_per_unit, brand')
+    .select('id, name, unit, current_price, brand')
     .eq('restaurant_id', profile?.restaurant_id)
     .order('name')
 
