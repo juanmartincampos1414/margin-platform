@@ -76,6 +76,8 @@ IMPORTANTE sobre paquetes/cajones/cajas/bultos: muchas líneas de factura factur
 - "pack_price" es el precio del paquete/cajón/caja completo tal como figura impreso en la factura — NUNCA lo dividas vos, dejá ese cálculo para después.
 Ejemplo: "1 cajón x 10 unidades — $5.200" → quantity=1, unit="un", units_per_pack=10, pack_price=5200.
 
+OJO: el tamaño del paquete a veces viene escrito dentro del propio nombre del producto, no como una anotación separada (ej: "Agua con gas 0.5L Vidrio x12" facturado a $5.200 significa un paquete de 12 unidades a $5.200 el paquete, NO una unidad a $5.200). Si el nombre del producto termina en "xN", tratá esa N como units_per_pack salvo que el producto explícitamente se venda unitario.
+
 Respondé ÚNICAMENTE con JSON válido:
 {
   "supplier_name": "nombre del proveedor",
@@ -165,7 +167,20 @@ Respondé ÚNICAMENTE con JSON válido:
       // unit_price must always be the price per BASE unit. pack_price is
       // what's literally printed on the invoice (e.g. $5,200 for a case of
       // 10) — it must never be stored as-is as the per-unit price.
-      const unitsPerPack = item.units_per_pack && item.units_per_pack > 0 ? item.units_per_pack : 1
+      let unitsPerPack = item.units_per_pack && item.units_per_pack > 0 ? item.units_per_pack : 1
+
+      // Deterministic safety net: some suppliers print the pack size as
+      // part of the product name itself (e.g. "Agua con gas 0.5L Vidrio
+      // x12") rather than as a separate "cajón x10" annotation. The OCR
+      // prompt can miss this, so re-check the name directly instead of
+      // relying solely on the model — this never fires when the model
+      // already detected a pack (unitsPerPack > 1).
+      if (unitsPerPack === 1) {
+        const packInName = item.ingredient_name.match(/x\s*(\d{1,3})\s*$/i)
+        const detectedPack = packInName ? parseInt(packInName[1], 10) : null
+        if (detectedPack && detectedPack > 1) unitsPerPack = detectedPack
+      }
+
       const packPrice = item.pack_price ?? null
       const unitPrice = packPrice != null ? packPrice / unitsPerPack : null
 
