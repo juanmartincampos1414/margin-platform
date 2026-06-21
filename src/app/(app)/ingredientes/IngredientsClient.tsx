@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import { formatCurrency } from '@/lib/utils'
 
 interface Ingredient {
@@ -78,9 +77,13 @@ export default function IngredientsClient({ ingredients: initial, restaurantId }
       const data = await res.json()
       if (res.ok) setIngredients(prev => prev.map(i => i.id === editingId ? { ...i, ...data } : i))
     } else {
-      const supabase = createClient()
-      const { data } = await supabase.from('ingredients').insert({ ...payload, restaurant_id: restaurantId, status: 'validated' }).select().single()
-      if (data) setIngredients(prev => [...prev, data])
+      const res = await fetch('/api/ingredients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (res.ok) setIngredients(prev => [...prev, data])
     }
     setSaving(false)
     setShowForm(false)
