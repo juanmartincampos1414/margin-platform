@@ -95,6 +95,9 @@ export default async function FacturaDetailPage({ params }: { params: Promise<{ 
                 </div>
                 <div className="text-right">
                   <p className="font-semibold text-slate-800 text-sm">${Number(item.unit_price || 0).toLocaleString('es-AR')}/{item.unit}</p>
+                  {item.units_per_pack > 1 && (
+                    <p className="text-slate-400 text-xs">de ${Number(item.pack_price || 0).toLocaleString('es-AR')} el paquete x{item.units_per_pack}</p>
+                  )}
                   {item.price_change_pct && Math.abs(item.price_change_pct) > 0.5 && (
                     <p className={`text-xs font-medium ${item.price_change_pct > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
                       {item.price_change_pct > 0 ? '▲' : '▼'} {Math.abs(item.price_change_pct).toFixed(1)}% vs precio anterior

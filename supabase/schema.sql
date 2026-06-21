@@ -153,6 +153,8 @@ create table public.invoice_lines (
   quantity numeric(10,3),
   unit text,
   unit_price numeric(12,2),
+  pack_price numeric(12,2),
+  units_per_pack integer not null default 1,
   total_price numeric(14,2),
   previous_price numeric(12,2),
   price_change_pct numeric(6,2),

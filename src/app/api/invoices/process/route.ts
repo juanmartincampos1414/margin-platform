@@ -73,6 +73,12 @@ export async function POST(req: Request) {
     const prompt = `Analizá esta factura de proveedor gastronómico y extraé todos los datos en JSON.
 ${ingredientContext}
 
+IMPORTANTE sobre paquetes/cajones/cajas/bultos: muchas líneas de factura facturan un paquete completo, no una unidad suelta (ej: "1 cajón x 10 unidades — $5.200", "Caja x 6 — $3.600"). Para esas líneas:
+- "unit" es siempre la unidad BASE del producto (kg/lt/un/etc) — NUNCA "cajón", "caja", "bulto" o "display", esas son unidades de empaque, no la unidad base.
+- "units_per_pack" es cuántas unidades base hay en cada paquete (ej: "cajón x 10" → 10). Si el producto se vende unitario sin empaque, usar 1.
+- "pack_price" es el precio del paquete/cajón/caja completo tal como figura impreso en la factura — NUNCA lo dividas vos, dejá ese cálculo para después.
+Ejemplo: "1 cajón x 10 unidades — $5.200" → quantity=1, unit="un", units_per_pack=10, pack_price=5200.
+
 Respondé ÚNICAMENTE con JSON válido:
 {
   "supplier_name": "nombre del proveedor",
@@ -86,9 +92,10 @@ Respondé ÚNICAMENTE con JSON válido:
   "items": [
     {
       "ingredient_name": "nombre del producto tal como aparece en la factura",
-      "quantity": número o null,
-      "unit": "kg/lt/un/etc o null",
-      "unit_price": número o null,
+      "quantity": número de paquetes/cajones/bultos facturados, o null,
+      "unit": "unidad base: kg/lt/un/etc",
+      "units_per_pack": número (1 si no hay empaque),
+      "pack_price": número (precio del paquete completo, o precio unitario si no hay empaque),
       "total_price": número o null
     }
   ]
@@ -158,6 +165,19 @@ Respondé ÚNICAMENTE con JSON válido:
       if (!item.ingredient_name) continue
       const normalizedName = normalize(item.ingredient_name)
 
+      // unit_price must always be the price per BASE unit. pack_price is
+      // what's literally printed on the invoice (e.g. $5,200 for a case of
+      // 10) — it must never be stored as-is as the per-unit price.
+      const unitsPerPack = item.units_per_pack && item.units_per_pack > 0 ? item.units_per_pack : 1
+      const packPrice = item.pack_price ?? null
+      const unitPrice = packPrice != null ? packPrice / unitsPerPack : null
+
+      // expose the computed per-unit price on the item so the upload
+      // preview/response can show "$520/un (de $5.200 el paquete x10)"
+      item.unit_price = unitPrice
+      item.units_per_pack = unitsPerPack
+      item.pack_price = packPrice
+
       let { data: ingredient } = await adminSupabase
         .from('ingredients')
         .select('id, current_price, current_price_invoice_date, unit')
@@ -181,13 +201,13 @@ Respondé ÚNICAMENTE con JSON válido:
         const newDate = extracted.invoice_date ? new Date(extracted.invoice_date) : null
         const currentDate = ingredient.current_price_invoice_date ? new Date(ingredient.current_price_invoice_date) : null
         const shouldUpdateCurrentPrice =
-          item.unit_price != null && newDate && (!currentDate || newDate > currentDate)
+          unitPrice != null && newDate && (!currentDate || newDate > currentDate)
 
         await adminSupabase
           .from('ingredients')
           .update({
             ...(shouldUpdateCurrentPrice
-              ? { current_price: item.unit_price, current_price_invoice_date: extracted.invoice_date }
+              ? { current_price: unitPrice, current_price_invoice_date: extracted.invoice_date }
               : {}),
             unit: item.unit || ingredient.unit,
             supplier_id: supplierId,
@@ -202,7 +222,7 @@ Respondé ÚNICAMENTE con JSON válido:
             name: item.ingredient_name,
             normalized_name: normalizedName,
             unit: item.unit || 'kg',
-            current_price: item.unit_price || 0,
+            current_price: unitPrice || 0,
             current_price_invoice_date: extracted.invoice_date || null,
             supplier_id: supplierId,
             status: 'draft',
@@ -218,8 +238,8 @@ Respondé ÚNICAMENTE con JSON válido:
         raw_text: item.ingredient_name,
       })
 
-      const priceChangePct = previousPrice && item.unit_price
-        ? ((item.unit_price - previousPrice) / previousPrice) * 100
+      const priceChangePct = previousPrice && unitPrice
+        ? ((unitPrice - previousPrice) / previousPrice) * 100
         : null
 
       await adminSupabase.from('invoice_lines').insert({
@@ -228,20 +248,22 @@ Respondé ÚNICAMENTE con JSON válido:
         ingredient_name: item.ingredient_name,
         quantity: item.quantity,
         unit: item.unit,
-        unit_price: item.unit_price,
+        unit_price: unitPrice,
+        pack_price: packPrice,
+        units_per_pack: unitsPerPack,
         total_price: item.total_price,
         previous_price: previousPrice,
         price_change_pct: priceChangePct,
       })
 
       // append-only price history: only when price actually changed (or first time seen)
-      if (item.unit_price != null && item.unit_price !== previousPrice) {
+      if (unitPrice != null && unitPrice !== previousPrice) {
         await adminSupabase.from('price_history').insert({
           restaurant_id: restaurantId,
           ingredient_id: ingredientId,
           supplier_id: supplierId,
           invoice_id: invoiceId,
-          price: item.unit_price,
+          price: unitPrice,
           unit: item.unit || 'kg',
         })
       }
