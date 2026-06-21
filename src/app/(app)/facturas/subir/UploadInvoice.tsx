@@ -3,11 +3,7 @@
 import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
-interface Props {
-  restaurantId?: string
-}
-
-export default function UploadInvoice({ restaurantId }: Props) {
+export default function UploadInvoice() {
   const router = useRouter()
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
@@ -38,14 +34,13 @@ export default function UploadInvoice({ restaurantId }: Props) {
   }
 
   async function handleProcess() {
-    if (!file || !restaurantId) return
+    if (!file) return
     setLoading(true)
     setError('')
 
     try {
       const formData = new FormData()
       formData.append('file', file)
-      formData.append('restaurantId', restaurantId)
 
       const uploadRes = await fetch('/api/invoices/upload', { method: 'POST', body: formData })
       if (!uploadRes.ok) throw new Error((await uploadRes.json()).error || 'Error al subir la factura')

@@ -88,10 +88,9 @@ export default function IngredientsClient({ ingredients: initial, restaurantId }
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('¿Eliminar este ingrediente?')) return
-    const supabase = createClient()
-    await supabase.from('ingredients').delete().eq('id', id)
-    setIngredients(prev => prev.filter(i => i.id !== id))
+    if (!confirm('¿Archivar este ingrediente? Las recetas y facturas que ya lo usan no se ven afectadas.')) return
+    const res = await fetch(`/api/ingredients/${id}`, { method: 'DELETE' })
+    if (res.ok) setIngredients(prev => prev.filter(i => i.id !== id))
   }
 
   return (
@@ -160,7 +159,7 @@ export default function IngredientsClient({ ingredients: initial, restaurantId }
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <button onClick={() => openEdit(ing)} className="text-slate-400 hover:text-indigo-600 transition-colors text-sm">Editar</button>
-                      <button onClick={() => handleDelete(ing.id)} className="text-slate-400 hover:text-red-500 transition-colors text-sm">Eliminar</button>
+                      <button onClick={() => handleDelete(ing.id)} className="text-slate-400 hover:text-red-500 transition-colors text-sm">Archivar</button>
                     </div>
                   </td>
                 </tr>

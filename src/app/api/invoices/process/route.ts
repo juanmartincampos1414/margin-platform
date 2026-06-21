@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
+import { requireRestaurant } from '@/lib/auth'
 
 const CONFIDENCE_THRESHOLD = 70
 
@@ -24,6 +25,10 @@ async function fileToBase64(url: string) {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireRestaurant()
+  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  const { restaurantId } = auth
+
   const { anthropic, adminSupabase } = getClients()
   const { invoiceId } = await req.json()
 
@@ -38,6 +43,12 @@ export async function POST(req: Request) {
     .single()
 
   if (!invoice) {
+    return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+  }
+
+  // The invoice must belong to the caller's own restaurant — never trust
+  // invoiceId alone, since the admin client below bypasses RLS.
+  if (invoice.restaurant_id !== restaurantId) {
     return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
   }
 

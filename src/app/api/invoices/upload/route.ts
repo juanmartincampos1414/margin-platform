@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireRestaurant } from '@/lib/auth'
 
 function getAdminClient() {
   return createClient(
@@ -9,13 +10,19 @@ function getAdminClient() {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireRestaurant()
+  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  const { restaurantId } = auth
+
+  // service-role is only used here for the Storage write, which the
+  // session-scoped client can't do directly — restaurantId itself is
+  // never trusted from the client, it's resolved from the session above.
   const adminSupabase = getAdminClient()
   const formData = await req.formData()
   const file = formData.get('file') as File
-  const restaurantId = formData.get('restaurantId') as string
 
-  if (!file || !restaurantId) {
-    return NextResponse.json({ error: 'Missing file or restaurantId' }, { status: 400 })
+  if (!file) {
+    return NextResponse.json({ error: 'Missing file' }, { status: 400 })
   }
 
   const allowedTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png']

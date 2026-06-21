@@ -17,6 +17,7 @@ export default async function NuevaRecetaPage() {
     .from('ingredients')
     .select('id, name, unit, current_price, brand')
     .eq('restaurant_id', profile?.restaurant_id)
+    .neq('status', 'archived')
     .order('name')
 
   return (

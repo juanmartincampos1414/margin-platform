@@ -33,6 +33,7 @@ export default async function EditarRecetaPage({ params }: { params: Promise<{ i
     .from('ingredients')
     .select('id, name, unit, current_price, brand')
     .eq('restaurant_id', profile?.restaurant_id)
+    .neq('status', 'archived')
     .order('name')
 
   return (

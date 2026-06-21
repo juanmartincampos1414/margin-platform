@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { requireUser } from '@/lib/auth'
 
 export async function POST(req: Request) {
+  const auth = await requireUser()
+  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const { recipeName, totalCost, salePrice, grossMargin, ingredients } = await req.json()
 

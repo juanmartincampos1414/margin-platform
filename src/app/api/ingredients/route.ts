@@ -13,6 +13,7 @@ export async function GET() {
     .from('ingredients')
     .select('*, suppliers(id, name)')
     .eq('restaurant_id', profile.restaurant_id)
+    .neq('status', 'archived')
     .order('name')
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

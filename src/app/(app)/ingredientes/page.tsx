@@ -17,6 +17,7 @@ export default async function IngredientsPage() {
     .from('ingredients')
     .select('*, suppliers(id, name)')
     .eq('restaurant_id', profile?.restaurant_id)
+    .neq('status', 'archived')
     .order('name')
 
   return <IngredientsClient ingredients={ingredients || []} restaurantId={profile?.restaurant_id} />
