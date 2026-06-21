@@ -120,6 +120,45 @@ create table public.recipe_ingredients (
 );
 
 -- =====================
+-- MENU CATEGORIES
+-- =====================
+create table public.menu_categories (
+  id uuid primary key default uuid_generate_v4(),
+  restaurant_id uuid references public.restaurants on delete cascade,
+  name text not null,
+  created_at timestamptz default now()
+);
+
+-- =====================
+-- MENU IMPORTS
+-- =====================
+create table public.menu_imports (
+  id uuid primary key default uuid_generate_v4(),
+  restaurant_id uuid references public.restaurants on delete cascade,
+  file_name text,
+  file_type text,
+  file_url text,
+  status text not null default 'uploaded' check (status in ('uploaded', 'processing', 'completed', 'failed')),
+  created_at timestamptz default now()
+);
+
+-- =====================
+-- MENU ITEMS
+-- =====================
+create table public.menu_items (
+  id uuid primary key default uuid_generate_v4(),
+  restaurant_id uuid references public.restaurants on delete cascade,
+  category_id uuid references public.menu_categories,
+  menu_import_id uuid references public.menu_imports,
+  name text not null,
+  normalized_name text,
+  selling_price numeric(12,2) not null default 0,
+  recipe_id uuid references public.recipes,
+  status text not null default 'pending_review' check (status in ('pending_review', 'active', 'archived')),
+  created_at timestamptz default now()
+);
+
+-- =====================
 -- INVOICES (OCR)
 -- =====================
 create table public.invoices (
