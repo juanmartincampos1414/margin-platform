@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { requireRestaurant } from '@/lib/auth'
+import { normalizeIngredientName } from '@/lib/utils'
 
 export async function POST(req: Request) {
   const auth = await requireRestaurant()
@@ -18,6 +19,7 @@ export async function POST(req: Request) {
     .insert({
       restaurant_id: restaurantId,
       name,
+      normalized_name: normalizeIngredientName(name),
       brand: brand || null,
       unit: unit || 'kg',
       current_price: current_price || 0,

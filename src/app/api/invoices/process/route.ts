@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
 import { requireRestaurant } from '@/lib/auth'
+import { normalizeIngredientName } from '@/lib/utils'
 
 const CONFIDENCE_THRESHOLD = 70
 
@@ -12,10 +13,6 @@ function getClients() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
   return { anthropic, adminSupabase }
-}
-
-function normalize(name: string) {
-  return name.trim().toUpperCase().replace(/\s+/g, ' ')
 }
 
 async function fileToBase64(url: string) {
@@ -163,7 +160,7 @@ Respondé ÚNICAMENTE con JSON válido:
     const items = extracted.items || []
     for (const item of items) {
       if (!item.ingredient_name) continue
-      const normalizedName = normalize(item.ingredient_name)
+      const normalizedName = normalizeIngredientName(item.ingredient_name)
 
       // unit_price must always be the price per BASE unit. pack_price is
       // what's literally printed on the invoice (e.g. $5,200 for a case of

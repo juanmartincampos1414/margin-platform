@@ -28,3 +28,11 @@ export function getMarginBg(margin: number) {
   if (margin >= 40) return 'bg-yellow-50 border-yellow-200'
   return 'bg-red-50 border-red-200'
 }
+
+// Shared by manual ingredient creation (POST /api/ingredients) and OCR
+// ingredient matching (/api/invoices/process) — both must compute
+// normalized_name identically, or a manually created ingredient won't be
+// matched by a later invoice for the same product, creating a duplicate.
+export function normalizeIngredientName(name: string) {
+  return name.trim().toUpperCase().replace(/\s+/g, ' ')
+}
