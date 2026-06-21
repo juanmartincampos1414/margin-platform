@@ -176,7 +176,18 @@ Respondé ÚNICAMENTE con JSON válido:
       // relying solely on the model — this never fires when the model
       // already detected a pack (unitsPerPack > 1).
       if (unitsPerPack === 1) {
-        const packInName = item.ingredient_name.match(/x\s*(\d{1,3})\s*$/i)
+        // Must be its own whitespace-delimited token (e.g. "Vidrio x12")
+        // — not glued to another word or number. A bare trailing
+        // /x\d+$/ also matches dimension notation like "48x58" or
+        // "60X70" (cm measurements on textiles/cloths), which is not a
+        // pack size at all. Requiring "xN" to be the entire last token
+        // rules that out; the tradeoff is that a pack size glued to a
+        // preceding number (e.g. "350X24") won't be caught here — that's
+        // an acceptable false negative (data stays as-is) vs. the
+        // alternative of silently corrupting a real price (false positive).
+        const tokens = item.ingredient_name.trim().split(/\s+/)
+        const lastToken = tokens[tokens.length - 1]
+        const packInName = lastToken.match(/^x(\d{1,3})$/i)
         const detectedPack = packInName ? parseInt(packInName[1], 10) : null
         if (detectedPack && detectedPack > 1) unitsPerPack = detectedPack
       }
