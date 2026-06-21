@@ -29,6 +29,7 @@ export default async function DashboardPage() {
     .from('ingredients')
     .select('id')
     .eq('restaurant_id', restaurantId)
+    .neq('status', 'archived')
 
   const { data: invoices } = await supabase
     .from('invoices')

@@ -101,34 +101,35 @@ None needed. Optionally, document the "how to perform a legitimate manual correc
 
 ## Priority 04 — Current Price By Invoice Date
 
-**Classification: PASS WITH RECOMMENDATIONS**
+**Classification: PASS**
 
-### 1. Specification Coverage: 90%
+### 1. Specification Coverage: 100%
 
 ### 2. Requirements Implemented
 - `ingredients.current_price_invoice_date` exists and is correctly gating updates in `process/route.ts`: `current_price` only changes when the new invoice's `invoice_date` is strictly newer than the stored date.
 - Backfill ran, recomputing `current_price` from the actual latest-invoice_date `price_history` row per ingredient — the approved correction of already-wrong historical data, not just a forward-looking fix.
 - Manual price edits via `PATCH /api/ingredients/[id]` correctly set `current_price_invoice_date` to today, per your confirmed decision, so a manual correction can't be silently overwritten by an already-on-file older invoice.
 - The exact validation scenario from the spec (June $1,000 processed, then March $700 processed after) was run against production and passed: `current_price` stayed at 1000, `current_price_invoice_date` stayed at the June date, both price points exist in `price_history`.
+- **Gap closed (commits `2d179da`, `12b5137`):** manual ingredient creation now goes through a new `POST /api/ingredients` endpoint that sets `current_price_invoice_date` to today on creation, mirroring the existing PATCH behavior. While implementing this, production validation surfaced a second, related bug: the new endpoint initially left `normalized_name` null, which would have caused a later invoice for the same product to create a **duplicate ingredient** instead of correctly matching the existing one and respecting the date gate. This was fixed by extracting the normalization logic (previously private to the OCR route) into a shared `normalizeIngredientName()` helper in `lib/utils.ts`, used by both `POST /api/ingredients` and `/api/invoices/process` — removing the risk of the two call sites drifting apart again.
+- **Re-validated end-to-end in production** after both fixes: created "Tomate Test P04Fix2" manually at $2,000 → processed a synthetic invoice dated January 2020 for the same product at $500 → confirmed exactly one ingredient row exists (no duplicate), `current_price` remained 2000, `current_price_invoice_date` remained today's date. The old invoice's supplier and `last_updated` correctly attached to the ingredient — only the protected price/date fields were correctly left untouched.
 
 ### 3. Missing Requirements
-- **New-ingredient creation via the Ingredient Master "+ Nuevo ingrediente" form does not set `current_price_invoice_date`.** It inserts directly from the browser with no date field at all (null). This matters: if a user manually creates "Tomate" today with no invoice backing it, and *any* invoice — even one dated years ago — is later processed with a line item matching that ingredient's normalized name, `shouldUpdateCurrentPrice` evaluates `(!currentDate || newDate > currentDate)` → `!currentDate` is `true` since it's null → the old invoice's price silently overwrites the manually-entered one, regardless of date. This is the same failure mode Priority 04 was created to fix, just reached through a different entry point (manual creation instead of manual edit) that wasn't in scope when the fix was implemented.
+None remaining. The gap identified in the first audit pass (manual creation not setting `current_price_invoice_date`) is closed and verified; the `normalized_name` bug discovered while closing it is also fixed and verified.
 
 ### 4. Edge Cases Not Covered
 - **Same-date invoices processed twice.** If two invoices share an identical `invoice_date`, the second one processed will *not* update `current_price` (the comparison is strict `>`, not `>=`), which matches the spec's pseudo-logic exactly — but this exact tie-breaking behavior was never explicitly validated with a same-date test case, only reasoned about during analysis.
-- **Re-processing the same invoice twice.** Calling `/api/invoices/process` a second time for an already-processed `invoiceId` would insert a **duplicate row into `invoice_lines`** (no idempotency check on that insert), though it correctly would *not* duplicate a `price_history` row (guarded by the `unitPrice !== previousPrice` check, and on a re-run `previousPrice` would already equal `unitPrice` from the first run). This isn't a regression introduced by P04 — the lack of idempotency predates it — but it's a real gap that affects confidence in the data `current_price_invoice_date` decisions are based on if duplicate processing ever happens (e.g. a double-click, or a retried request after a timeout).
+- **Re-processing the same invoice twice.** Calling `/api/invoices/process` a second time for an already-processed `invoiceId` would insert a **duplicate row into `invoice_lines`** (no idempotency check on that insert), though it correctly would *not* duplicate a `price_history` row (guarded by the `unitPrice !== previousPrice` check, and on a re-run `previousPrice` would already equal `unitPrice` from the first run). This predates Priority 04 and isn't a regression from it, but remains a real gap affecting confidence in repeated processing.
 
 ### 5. Technical Risks
-The new-ingredient-creation gap (§3) is the most concrete risk: it's a straightforward way to reproduce the exact bug Priority 04 fixed, just via a different code path. Low likelihood (requires a user to manually create an ingredient *and* later have an old invoice reference the same normalized name), but the failure mode is identical to the original bug report.
+Low. The core date-gating guarantee now holds across both entry points that can set/change `current_price` (manual create, manual edit, and invoice processing), and the shared `normalizeIngredientName()` helper removes the specific drift risk that caused the duplicate-ingredient bug found during this fix. The re-processing idempotency gap (§4) remains a minor open risk, unrelated to this priority's core requirement.
 
 ### 6. Product Risks
-A restaurant owner who manually sets a price for a new ingredient, then later uploads a backlog of old invoices (a very plausible onboarding pattern — "let me upload my last 6 months of invoices"), could see that manual price silently overwritten by an old invoice without any indication of why. This is a realistic scenario, not a contrived edge case.
+None remaining for the scenario this priority targets (manual price entry surviving a backlog of old invoice uploads) — verified directly. The re-processing edge case (§4) is a low-probability, low-severity residual risk (duplicate display rows on an invoice detail page in the rare case of a retried request), not a pricing-correctness risk.
 
 ### 7. Recommendations
-- Route ingredient creation in `IngredientsClient.tsx` through a `POST /api/ingredients` endpoint (doesn't exist yet — only `GET`/`PATCH` do) that sets `current_price_invoice_date = today` on creation, mirroring the PATCH behavior. This closes the gap with the same pattern already established, no new design needed.
-- Add a uniqueness/idempotency guard on `invoice_lines` insert (e.g. check for an existing line with the same `invoice_id` + `ingredient_name` before inserting, or a unique constraint) to remove the re-processing risk noted in §4.
+- Add a uniqueness/idempotency guard on `invoice_lines` insert (e.g. check for an existing line with the same `invoice_id` + `ingredient_name` before inserting, or a unique constraint) to remove the re-processing risk noted in §4. Not blocking for the freeze — this is a pre-existing, unrelated gap, not a Priority 04 requirement.
 
-### 8. Final Score: 7/10
+### 8. Final Score: 10/10
 
 ---
 
@@ -174,11 +175,9 @@ Because real invoices weren't part of validation, there's a real chance the prom
 | 01 — Security | PASS | 9/10 |
 | 02 — Ingredient Soft Delete | PASS WITH RECOMMENDATIONS | 8/10 |
 | 03 — Price History Protection | PASS | 10/10 |
-| 04 — Current Price By Invoice Date | PASS WITH RECOMMENDATIONS | 7/10 |
+| 04 — Current Price By Invoice Date | PASS | 10/10 |
 | 05 — Unit Price / Pack Size | PASS WITH RECOMMENDATIONS | 8/10 |
 
-**No FAILs.** All five priorities correctly implement and pass their core specifications and validation scenarios as written. The recommendations above are refinements and edge-case hardening, not corrections of broken behavior — every gap found is a *narrower* miss (an alternate entry point, an untested combination, a missing convenience feature) rather than the original bug resurfacing.
+**No FAILs. Priority 04's gap is closed and re-verified in production** (commits `2d179da`, `12b5137`) — manual ingredient creation now sets `current_price_invoice_date` exactly like manual edits already did, and the `normalized_name` bug found while closing that gap is also fixed, with a shared helper preventing the two call sites from drifting apart again. The remaining recommendations on Priorities 02 and 05 are refinements and edge-case hardening, not corrections of broken behavior — every remaining gap is a *narrower* miss (a missing convenience feature, an untested combination) rather than any original bug resurfacing.
 
-**The one item worth weighing before freezing:** Priority 04's gap (§3) — new-ingredient creation can reproduce the exact "old invoice silently overwrites current price" bug this priority exists to prevent. It's a small, well-understood fix (route creation through an API route that sets `current_price_invoice_date`, mirroring the existing PATCH behavior) and directly touches the same correctness guarantee Sprint 05/06 will build on top of.
-
-**Recommendation:** the foundation is sound enough to proceed, but I'd close the Priority 04 ingredient-creation gap first — it's small, well-scoped, and sits squarely in "already covered by an established pattern" territory rather than new design work. Your call whether that's a quick fix-then-freeze, or whether you'd rather freeze now and track it as a fast-follow alongside Sprint 05.
+**Foundation status: ready to freeze.** All five priorities pass their core specifications and validation scenarios, verified live in production, not just by code inspection. The open recommendations (ingredient restore/un-archive flow, in-use warning before archiving, multi-pack-quantity test case, real-invoice OCR smoke test, invoice re-processing idempotency) are reasonable fast-follows that don't block Sprint 05 — none of them touch the specific correctness guarantees Menu Intelligence will build on top of (invoice → supplier/ingredient → price history → recipe cost).
