@@ -2,10 +2,12 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { formatCurrency } from '@/lib/utils'
+import Link from 'next/link'
+import { formatCurrency, formatPercent, getMarginColor } from '@/lib/utils'
 
 interface Category { id: string; name: string }
 interface Recipe { id: string; name: string }
+interface Profitability { cost: number; foodCostPct: number; grossMarginPct: number; grossProfit: number }
 interface MenuItem {
   id: string
   name: string
@@ -13,6 +15,8 @@ interface MenuItem {
   status: string
   menu_categories?: Category | null
   recipes?: Recipe | null
+  profitability?: Profitability | null
+  recipeHasCost?: boolean
 }
 
 interface Props {
@@ -78,8 +82,7 @@ export default function MenuLibraryClient({ menuItems: initial, categories, reci
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recipe_id: recipeId || null }),
     })
-    const data = await res.json()
-    if (res.ok) setMenuItems(prev => prev.map(i => i.id === itemId ? data : i))
+    if (res.ok) router.refresh()
     setLinkingId(null)
   }
 
@@ -105,43 +108,71 @@ export default function MenuLibraryClient({ menuItems: initial, categories, reci
             <div key={categoryName}>
               <div className="bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">{categoryName}</div>
               <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-slate-400 text-xs">
+                    <th className="text-left px-4 py-1.5 font-medium">Plato</th>
+                    <th className="text-right px-4 py-1.5 font-medium">Precio</th>
+                    <th className="text-left px-4 py-1.5 font-medium">Receta</th>
+                    <th className="text-right px-4 py-1.5 font-medium">Costo</th>
+                    <th className="text-right px-4 py-1.5 font-medium">Food Cost %</th>
+                    <th className="text-right px-4 py-1.5 font-medium">Margen</th>
+                    <th className="text-right px-4 py-1.5 font-medium">Ganancia</th>
+                    <th className="px-4 py-1.5"></th>
+                  </tr>
+                </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {categoryItems.map(item => (
-                    <tr key={item.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 w-1/3">
-                        <p className="font-medium text-slate-800">{item.name}</p>
-                      </td>
-                      <td className="px-4 py-3 text-right font-semibold text-slate-900 w-32">{formatCurrency(item.selling_price)}</td>
-                      <td className="px-4 py-3">
-                        {linkingId === item.id ? (
-                          <select
-                            autoFocus
-                            defaultValue={item.recipes?.id || ''}
-                            onChange={e => handleLinkRecipe(item.id, e.target.value)}
-                            onBlur={() => setLinkingId(null)}
-                            className="border border-slate-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:border-indigo-500"
-                          >
-                            <option value="">Sin receta</option>
-                            {recipes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                          </select>
-                        ) : (
-                          <button onClick={() => setLinkingId(item.id)}>
-                            {item.recipes ? (
-                              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">Recipe Connected</span>
-                            ) : (
+                  {categoryItems.map(item => {
+                    const p = item.profitability
+                    const isCosted = item.recipeHasCost && p
+                    return (
+                      <tr key={item.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-slate-800">{item.name}</p>
+                        </td>
+                        <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.selling_price)}</td>
+                        <td className="px-4 py-3">
+                          {linkingId === item.id ? (
+                            <select
+                              autoFocus
+                              defaultValue={item.recipes?.id || ''}
+                              onChange={e => handleLinkRecipe(item.id, e.target.value)}
+                              onBlur={() => setLinkingId(null)}
+                              className="border border-slate-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:border-indigo-500"
+                            >
+                              <option value="">Sin receta</option>
+                              {recipes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                            </select>
+                          ) : !item.recipes ? (
+                            <div className="flex items-center gap-2">
                               <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700">Recipe Missing</span>
-                            )}
-                          </button>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button onClick={() => openEdit(item)} className="text-slate-400 hover:text-indigo-600 transition-colors text-sm">Editar</button>
-                          <button onClick={() => handleArchive(item.id)} className="text-slate-400 hover:text-red-500 transition-colors text-sm">Archivar</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                              <Link href={`/recetas/nueva?menu_item_id=${item.id}`} className="text-indigo-600 hover:text-indigo-700 text-xs font-medium">Crear receta</Link>
+                              <button onClick={() => setLinkingId(item.id)} className="text-slate-400 hover:text-slate-600 text-xs">Vincular</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              {isCosted ? (
+                                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">Recipe Connected</span>
+                              ) : (
+                                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-yellow-100 text-yellow-700" title="La receta no tiene ingredientes todavía">Sin costo</span>
+                              )}
+                              <Link href={`/recetas/${item.recipes.id}`} className="text-slate-500 hover:text-indigo-600 text-xs">{item.recipes.name}</Link>
+                              <button onClick={() => setLinkingId(item.id)} className="text-slate-400 hover:text-slate-600 text-xs">Cambiar</button>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right text-slate-700">{isCosted ? formatCurrency(p!.cost) : '—'}</td>
+                        <td className="px-4 py-3 text-right text-slate-700">{isCosted ? formatPercent(p!.foodCostPct) : '—'}</td>
+                        <td className={`px-4 py-3 text-right font-semibold ${isCosted ? getMarginColor(p!.grossMarginPct) : 'text-slate-400'}`}>{isCosted ? formatPercent(p!.grossMarginPct) : '—'}</td>
+                        <td className="px-4 py-3 text-right text-slate-700">{isCosted ? formatCurrency(p!.grossProfit) : '—'}</td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button onClick={() => openEdit(item)} className="text-slate-400 hover:text-indigo-600 transition-colors text-sm">Editar</button>
+                            <button onClick={() => handleArchive(item.id)} className="text-slate-400 hover:text-red-500 transition-colors text-sm">Archivar</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

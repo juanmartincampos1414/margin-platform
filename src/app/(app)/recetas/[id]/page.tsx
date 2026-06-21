@@ -2,6 +2,7 @@ import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { formatCurrency, formatPercent, getMarginColor, getMarginBg } from '@/lib/utils'
+import { calculateLineCost, calculateRecipeCost } from '@/lib/recipes'
 import RecipeAI from '@/components/recipes/RecipeAI'
 
 export default async function RecipeDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -31,14 +32,8 @@ export default async function RecipeDetailPage({ params }: { params: Promise<{ i
 
   if (!recipe) notFound()
 
-  function calcLineCost(ri: any): number {
-    if (!ri.ingredients) return 0
-    const ratio = (ri.unit === 'gr' && ri.ingredients.unit === 'kg') ||
-                  (ri.unit === 'ml' && ri.ingredients.unit === 'lt') ? 1000 : 1
-    return ri.quantity * ri.ingredients.current_price / ratio
-  }
-
-  const totalCost = (recipe.recipe_ingredients || []).reduce((s: number, ri: any) => s + calcLineCost(ri), 0)
+  const calcLineCost = calculateLineCost
+  const totalCost = calculateRecipeCost(recipe.recipe_ingredients)
   const grossMargin = recipe.sale_price > 0 ? ((recipe.sale_price - totalCost) / recipe.sale_price) * 100 : 0
   const netMargin = grossMargin * 0.7 // rough estimate
 

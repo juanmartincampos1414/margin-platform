@@ -26,6 +26,13 @@ interface Props {
   ingredients: Ingredient[]
   restaurantId?: string
   recipe?: any
+  // Present only when arriving from Menu Intelligence's "Crear receta"
+  // action. initialSalePrice seeds recipes.sale_price as a one-time
+  // starting reference — it is never kept in sync with the menu item's
+  // selling_price afterward.
+  initialName?: string
+  initialSalePrice?: number
+  menuItemId?: string
 }
 
 const UNIT_OPTIONS = ['gr', 'kg', 'ml', 'lt', 'un', 'doc']
@@ -36,10 +43,10 @@ function calcLineCost(li: LineItem): number {
   return li.quantity * li.current_price / ratio
 }
 
-export default function RecipeForm({ ingredients, restaurantId, recipe }: Props) {
+export default function RecipeForm({ ingredients, restaurantId, recipe, initialName, initialSalePrice, menuItemId }: Props) {
   const router = useRouter()
-  const [name, setName] = useState(recipe?.name || '')
-  const [salePrice, setSalePrice] = useState(recipe?.sale_price || '')
+  const [name, setName] = useState(recipe?.name || initialName || '')
+  const [salePrice, setSalePrice] = useState(recipe?.sale_price || initialSalePrice || '')
   const [servings, setServings] = useState(recipe?.servings || 1)
   const [status, setStatus] = useState(recipe?.status || 'active')
   const [search, setSearch] = useState('')
@@ -51,10 +58,13 @@ export default function RecipeForm({ ingredients, restaurantId, recipe }: Props)
     current_price: ri.ingredients?.current_price || 0,
     base_unit: ri.ingredients?.unit || 'kg',
   })) || [])
+  const [allIngredients, setAllIngredients] = useState(ingredients)
+  const [creatingIngredient, setCreatingIngredient] = useState(false)
+  const [newIngredient, setNewIngredient] = useState({ name: '', unit: 'kg', current_price: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const filteredIngredients = ingredients.filter(i =>
+  const filteredIngredients = allIngredients.filter(i =>
     !lines.find(l => l.ingredient_id === i.id) &&
     i.name.toLowerCase().includes(search.toLowerCase())
   )
@@ -73,6 +83,26 @@ export default function RecipeForm({ ingredients, restaurantId, recipe }: Props)
       base_unit: ing.unit,
     }])
     setSearch('')
+  }
+
+  async function handleCreateIngredient() {
+    if (!newIngredient.name) return
+    const res = await fetch('/api/ingredients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: newIngredient.name,
+        unit: newIngredient.unit,
+        current_price: parseFloat(newIngredient.current_price) || 0,
+      }),
+    })
+    const created = await res.json()
+    if (res.ok) {
+      setAllIngredients(prev => [...prev, created])
+      addIngredient(created)
+      setNewIngredient({ name: '', unit: 'kg', current_price: '' })
+      setCreatingIngredient(false)
+    }
   }
 
   function updateLine(idx: number, field: keyof LineItem, value: any) {
@@ -95,7 +125,7 @@ export default function RecipeForm({ ingredients, restaurantId, recipe }: Props)
         await supabase.from('recipe_ingredients').delete().eq('recipe_id', recipe.id)
         if (lines.length > 0) {
           await supabase.from('recipe_ingredients').insert(
-            lines.map(l => ({ recipe_id: recipe.id, ingredient_id: l.ingredient_id, quantity: l.quantity, unit: l.unit }))
+            lines.map((l, idx) => ({ recipe_id: recipe.id, ingredient_id: l.ingredient_id, quantity: l.quantity, unit: l.unit, position: idx }))
           )
         }
         router.push(`/recetas/${recipe.id}`)
@@ -107,10 +137,19 @@ export default function RecipeForm({ ingredients, restaurantId, recipe }: Props)
           .single()
         if (newRecipe && lines.length > 0) {
           await supabase.from('recipe_ingredients').insert(
-            lines.map(l => ({ recipe_id: newRecipe.id, ingredient_id: l.ingredient_id, quantity: l.quantity, unit: l.unit }))
+            lines.map((l, idx) => ({ recipe_id: newRecipe.id, ingredient_id: l.ingredient_id, quantity: l.quantity, unit: l.unit, position: idx }))
           )
         }
-        router.push('/recetas')
+        if (newRecipe && menuItemId) {
+          await fetch(`/api/menu/item/${menuItemId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ recipe_id: newRecipe.id }),
+          })
+          router.push('/menu')
+        } else {
+          router.push('/recetas')
+        }
       }
       router.refresh()
     } catch (e: any) {
@@ -157,8 +196,8 @@ export default function RecipeForm({ ingredients, restaurantId, recipe }: Props)
             placeholder="Buscar ingrediente..."
             className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500"
           />
-          {search && filteredIngredients.length > 0 && (
-            <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl mt-1 shadow-lg z-10 max-h-48 overflow-auto">
+          {search && (
+            <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl mt-1 shadow-lg z-10 max-h-56 overflow-auto">
               {filteredIngredients.slice(0, 8).map(ing => (
                 <button
                   key={ing.id}
@@ -169,9 +208,38 @@ export default function RecipeForm({ ingredients, restaurantId, recipe }: Props)
                   <span className="text-slate-500 text-xs">{formatCurrency(ing.current_price)}/{ing.unit}</span>
                 </button>
               ))}
+              <button
+                onClick={() => { setNewIngredient(n => ({ ...n, name: search })); setCreatingIngredient(true) }}
+                className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-indigo-50 text-left border-t border-slate-100 text-indigo-600 text-sm font-medium"
+              >
+                + Crear ingrediente &quot;{search}&quot;
+              </button>
             </div>
           )}
         </div>
+
+        {creatingIngredient && (
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 grid grid-cols-4 gap-2 items-end">
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-slate-600 mb-1">Nombre</label>
+              <input value={newIngredient.name} onChange={e => setNewIngredient(n => ({ ...n, name: e.target.value }))} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Unidad</label>
+              <select value={newIngredient.unit} onChange={e => setNewIngredient(n => ({ ...n, unit: e.target.value }))} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-500">
+                {UNIT_OPTIONS.map(u => <option key={u}>{u}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Precio</label>
+              <input type="number" value={newIngredient.current_price} onChange={e => setNewIngredient(n => ({ ...n, current_price: e.target.value }))} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-500" />
+            </div>
+            <div className="col-span-4 flex justify-end gap-2 mt-1">
+              <button onClick={() => setCreatingIngredient(false)} className="text-slate-500 text-sm px-3 py-1.5">Cancelar</button>
+              <button onClick={handleCreateIngredient} className="bg-indigo-500 hover:bg-indigo-600 text-white text-sm px-3 py-1.5 rounded-lg">Crear y agregar</button>
+            </div>
+          </div>
+        )}
 
         {/* Lines */}
         {lines.length > 0 && (

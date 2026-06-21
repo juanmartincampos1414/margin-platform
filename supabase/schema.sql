@@ -116,6 +116,7 @@ create table public.recipe_ingredients (
   ingredient_id uuid references public.ingredients on delete restrict,
   quantity numeric(10,3) not null,
   unit text not null,
+  position integer,
   created_at timestamptz default now()
 );
 
@@ -126,6 +127,7 @@ create table public.menu_categories (
   id uuid primary key default uuid_generate_v4(),
   restaurant_id uuid references public.restaurants on delete cascade,
   name text not null,
+  position integer,
   created_at timestamptz default now()
 );
 
@@ -155,8 +157,11 @@ create table public.menu_items (
   selling_price numeric(12,2) not null default 0,
   recipe_id uuid references public.recipes,
   status text not null default 'pending_review' check (status in ('pending_review', 'active', 'archived')),
+  position integer,
   created_at timestamptz default now()
 );
+
+create index if not exists idx_menu_items_recipe_id on public.menu_items (recipe_id);
 
 -- =====================
 -- INVOICES (OCR)

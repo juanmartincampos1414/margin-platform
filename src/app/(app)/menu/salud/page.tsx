@@ -15,14 +15,19 @@ export default async function MenuSaludPage() {
 
   const { data: activeItems } = await supabase
     .from('menu_items')
-    .select('id, recipe_id')
+    .select('id, recipe_id, recipes(recipe_ingredients(id))')
     .eq('restaurant_id', profile?.restaurant_id)
     .eq('status', 'active')
 
   const total = activeItems?.length || 0
   const withRecipe = activeItems?.filter(i => i.recipe_id).length || 0
+  // "Costeado" requires a linked recipe that actually has ingredients —
+  // a recipe_id alone isn't enough, since an empty recipe has no real cost
+  // to compute. This is the distinction the original audit flagged: this
+  // KPI must measure cost coverage, not just linkage.
+  const costed = activeItems?.filter(i => (i.recipes as any)?.recipe_ingredients?.length > 0).length || 0
   const withoutRecipe = total - withRecipe
-  const pctCosted = total > 0 ? (withRecipe / total) * 100 : 0
+  const pctCosted = total > 0 ? (costed / total) * 100 : 0
 
   return (
     <div className="p-8 max-w-3xl">
@@ -64,9 +69,19 @@ export default async function MenuSaludPage() {
           />
         </div>
         <p className="text-slate-400 text-xs mt-3">
-          {withoutRecipe > 0
-            ? `${withoutRecipe} producto${withoutRecipe > 1 ? 's' : ''} aún sin receta vinculada — vinculalos desde Menu Intelligence para poder calcular su food cost.`
-            : 'Todos los productos activos tienen una receta vinculada.'}
+          {(() => {
+            const linkedNotCosted = withRecipe - costed
+            if (withoutRecipe > 0 && linkedNotCosted > 0) {
+              return `${withoutRecipe} producto${withoutRecipe > 1 ? 's' : ''} sin receta y ${linkedNotCosted} con receta vinculada pero sin ingredientes todavía.`
+            }
+            if (withoutRecipe > 0) {
+              return `${withoutRecipe} producto${withoutRecipe > 1 ? 's' : ''} aún sin receta vinculada — creala desde Menu Intelligence para calcular su food cost.`
+            }
+            if (linkedNotCosted > 0) {
+              return `${linkedNotCosted} producto${linkedNotCosted > 1 ? 's' : ''} con receta vinculada pero sin ingredientes — agregalos para que se calcule su costo.`
+            }
+            return 'Todos los productos activos tienen su costo calculado.'
+          })()}
         </p>
       </div>
     </div>

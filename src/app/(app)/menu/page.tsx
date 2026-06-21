@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import { calculateRecipeCost, calculateProfitability } from '@/lib/recipes'
 import MenuLibraryClient from './MenuLibraryClient'
 
 export default async function MenuPage() {
@@ -16,12 +17,26 @@ export default async function MenuPage() {
 
   const restaurantId = profile?.restaurant_id
 
-  const { data: menuItems } = await supabase
+  const { data: rawMenuItems } = await supabase
     .from('menu_items')
-    .select('*, menu_categories(id, name), recipes(id, name)')
+    .select(`
+      *, menu_categories(id, name),
+      recipes(id, name, status, recipe_ingredients(quantity, unit, ingredients(current_price, unit)))
+    `)
     .eq('restaurant_id', restaurantId)
     .eq('status', 'active')
     .order('name')
+
+  // Recipe cost is always computed live from current ingredient prices —
+  // never cached on menu_items or recipes — same rule as the standalone
+  // Recipes module. selling_price is read only from menu_items (the
+  // commercial source of truth); recipes.sale_price is never read here.
+  const menuItems = (rawMenuItems || []).map(item => {
+    if (!item.recipes) return { ...item, profitability: null, recipeHasCost: false }
+    const cost = calculateRecipeCost(item.recipes.recipe_ingredients)
+    const profitability = calculateProfitability(item.selling_price, cost)
+    return { ...item, profitability, recipeHasCost: (item.recipes.recipe_ingredients?.length || 0) > 0 }
+  })
 
   const { count: pendingCount } = await supabase
     .from('menu_items')

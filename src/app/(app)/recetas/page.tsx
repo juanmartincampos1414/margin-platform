@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { formatCurrency, formatPercent, getMarginColor } from '@/lib/utils'
+import { calculateRecipeCost } from '@/lib/recipes'
 
 export default async function RecetasPage() {
   const supabase = await createClient()
@@ -25,15 +26,6 @@ export default async function RecetasPage() {
     `)
     .eq('restaurant_id', profile?.restaurant_id)
     .order('created_at', { ascending: false })
-
-  function calcCost(recipe: any) {
-    return (recipe.recipe_ingredients || []).reduce((sum: number, ri: any) => {
-      if (!ri.ingredients) return sum
-      const ratio = (ri.unit === 'gr' && ri.ingredients.unit === 'kg') ||
-                    (ri.unit === 'ml' && ri.ingredients.unit === 'lt') ? 1000 : 1
-      return sum + (ri.quantity * ri.ingredients.current_price / ratio)
-    }, 0)
-  }
 
   return (
     <div className="p-8">
@@ -59,7 +51,7 @@ export default async function RecetasPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {recipes.map(recipe => {
-            const cost = calcCost(recipe)
+            const cost = calculateRecipeCost(recipe.recipe_ingredients)
             const grossMargin = recipe.sale_price > 0 ? ((recipe.sale_price - cost) / recipe.sale_price) * 100 : 0
 
             return (
