@@ -42,7 +42,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (normalized_name !== undefined) payload.normalized_name = normalized_name
   if (category_id !== undefined) payload.category_id = category_id
   if (unit !== undefined) payload.unit = unit
-  if (current_price !== undefined) payload.current_price = current_price
+  if (current_price !== undefined) {
+    payload.current_price = current_price
+    // A manual price edit wins over any invoice already on file — only a
+    // future-dated invoice should be able to override it after this point.
+    payload.current_price_invoice_date = new Date().toISOString().slice(0, 10)
+  }
   if (supplier_id !== undefined) payload.supplier_id = supplier_id
   if (status !== undefined) payload.status = status
 

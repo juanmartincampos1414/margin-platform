@@ -68,6 +68,7 @@ create table public.ingredients (
   brand text,
   unit text not null default 'kg' check (unit in ('kg', 'gr', 'lt', 'ml', 'un', 'doc')),
   current_price numeric(12,2) not null default 0,
+  current_price_invoice_date date,
   stock_level text default 'medium' check (stock_level in ('high', 'medium', 'low', 'out')),
   category_id uuid references public.categories,
   supplier_id uuid references public.suppliers,

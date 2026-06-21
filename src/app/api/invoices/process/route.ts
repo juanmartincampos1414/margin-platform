@@ -160,7 +160,7 @@ Respondé ÚNICAMENTE con JSON válido:
 
       let { data: ingredient } = await adminSupabase
         .from('ingredients')
-        .select('id, current_price, unit')
+        .select('id, current_price, current_price_invoice_date, unit')
         .eq('restaurant_id', restaurantId)
         .eq('normalized_name', normalizedName)
         .maybeSingle()
@@ -171,10 +171,24 @@ Respondé ÚNICAMENTE con JSON válido:
       if (ingredient) {
         ingredientId = ingredient.id
         previousPrice = ingredient.current_price
+
+        // current_price must reflect the most recent invoice_date, not
+        // upload/processing order. Only update it when this invoice's date
+        // is strictly newer than whatever invoice currently backs the price.
+        // A missing invoice_date never counts as "newer" — it's recorded in
+        // price_history/invoice_lines below regardless, just never promoted
+        // to current_price.
+        const newDate = extracted.invoice_date ? new Date(extracted.invoice_date) : null
+        const currentDate = ingredient.current_price_invoice_date ? new Date(ingredient.current_price_invoice_date) : null
+        const shouldUpdateCurrentPrice =
+          item.unit_price != null && newDate && (!currentDate || newDate > currentDate)
+
         await adminSupabase
           .from('ingredients')
           .update({
-            current_price: item.unit_price ?? ingredient.current_price,
+            ...(shouldUpdateCurrentPrice
+              ? { current_price: item.unit_price, current_price_invoice_date: extracted.invoice_date }
+              : {}),
             unit: item.unit || ingredient.unit,
             supplier_id: supplierId,
             last_updated: new Date().toISOString(),
@@ -189,6 +203,7 @@ Respondé ÚNICAMENTE con JSON válido:
             normalized_name: normalizedName,
             unit: item.unit || 'kg',
             current_price: item.unit_price || 0,
+            current_price_invoice_date: extracted.invoice_date || null,
             supplier_id: supplierId,
             status: 'draft',
           })
