@@ -36,8 +36,20 @@ export default function ImportarRecetasPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ importId: uploadData.id }),
       })
+
+      // Vercel may return plain text (e.g. "Request Ended Unexpectedly") on timeout —
+      // always check content-type before calling .json() to show a useful error.
+      const contentType = processRes.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        const text = await processRes.text()
+        if (text.toLowerCase().includes('timeout') || text.toLowerCase().includes('ended') || processRes.status >= 504) {
+          throw new Error('El procesamiento tardó demasiado. El archivo puede ser muy grande — intentá con un PDF de menos páginas o dividilo en partes.')
+        }
+        throw new Error(`Error inesperado del servidor (${processRes.status}). Intentá de nuevo.`)
+      }
+
       const processData = await processRes.json()
-      if (!processRes.ok) throw new Error(processData.error)
+      if (!processRes.ok) throw new Error(processData.error || 'Error al procesar')
 
       router.push(`/recetas/importar/${uploadData.id}`)
     } catch (e: any) {
@@ -123,7 +135,11 @@ export default function ImportarRecetasPage() {
         <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 text-sm mb-4 flex items-center gap-3">
           <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin shrink-0" />
           <p className="text-indigo-700">
-            {status === 'uploading' ? 'Subiendo archivo...' : 'Claude está extrayendo las recetas... esto puede tomar hasta 30 segundos.'}
+            {status === 'uploading'
+              ? 'Subiendo archivo...'
+              : file && file.size > 2 * 1024 * 1024
+                ? 'Claude está procesando el recetario en partes... PDFs grandes pueden tardar 1-2 minutos.'
+                : 'Claude está extrayendo las recetas... esto puede tomar hasta 30 segundos.'}
           </p>
         </div>
       )}

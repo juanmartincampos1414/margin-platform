@@ -4,6 +4,12 @@ import { createClient } from '@supabase/supabase-js'
 import { requireRestaurant } from '@/lib/auth'
 import { normalizeIngredientName } from '@/lib/utils'
 import * as XLSX from 'xlsx'
+import { PDFDocument } from 'pdf-lib'
+
+// Extend Vercel serverless timeout — large recetarios (76+ pages) need up to 3 min.
+export const maxDuration = 300
+
+const CHUNK_SIZE = 20 // pages per Claude call
 
 function getClients() {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -14,22 +20,34 @@ function getClients() {
   return { anthropic, adminSupabase }
 }
 
-async function fileToBase64(url: string) {
+async function fetchBytes(url: string): Promise<Buffer> {
   const res = await fetch(url)
-  const buf = await res.arrayBuffer()
-  return Buffer.from(buf).toString('base64')
+  return Buffer.from(await res.arrayBuffer())
 }
 
-// Convert xlsx/xls/csv to a compact text representation for Claude.
-// Claude cannot read xlsx binary — we parse server-side and send CSV text.
-// Limits each sheet to 500 rows to stay within token budget.
-async function spreadsheetToText(url: string, ext: string): Promise<string> {
-  const res = await fetch(url)
-  const buf = await res.arrayBuffer()
+// Split a PDF buffer into chunks of up to CHUNK_SIZE pages.
+// Returns each chunk as a base64-encoded PDF string.
+async function splitPdf(pdfBytes: Buffer): Promise<string[]> {
+  const srcDoc = await PDFDocument.load(pdfBytes)
+  const totalPages = srcDoc.getPageCount()
+  const chunks: string[] = []
 
-  if (ext === 'csv') {
-    return Buffer.from(buf).toString('utf-8').slice(0, 80000)
+  for (let start = 0; start < totalPages; start += CHUNK_SIZE) {
+    const end = Math.min(start + CHUNK_SIZE, totalPages)
+    const chunkDoc = await PDFDocument.create()
+    const pageIndices = Array.from({ length: end - start }, (_, i) => start + i)
+    const copiedPages = await chunkDoc.copyPages(srcDoc, pageIndices)
+    copiedPages.forEach((p: any) => chunkDoc.addPage(p))
+    const chunkBytes = await chunkDoc.save()
+    chunks.push(Buffer.from(chunkBytes).toString('base64'))
   }
+  return chunks
+}
+
+// Convert xlsx/xls/csv to compact text. Claude cannot read xlsx binary.
+async function spreadsheetToText(url: string, ext: string): Promise<string> {
+  const buf = await fetchBytes(url)
+  if (ext === 'csv') return buf.toString('utf-8').slice(0, 80000)
 
   const workbook = XLSX.read(buf, { type: 'buffer' })
   const parts: string[] = []
@@ -37,15 +55,11 @@ async function spreadsheetToText(url: string, ext: string): Promise<string> {
     const sheet = workbook.Sheets[sheetName]
     const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false })
     const rows = csv.split('\n').filter(r => r.trim()).slice(0, 500)
-    if (rows.length > 0) {
-      parts.push(`=== Hoja: ${sheetName} ===\n${rows.join('\n')}`)
-    }
+    if (rows.length > 0) parts.push(`=== Hoja: ${sheetName} ===\n${rows.join('\n')}`)
   }
   return parts.join('\n\n').slice(0, 80000)
 }
 
-// Fuzzy match: how similar are two normalized strings?
-// Returns 0-100. Uses token overlap — good enough for recipe/menu names.
 function matchScore(a: string, b: string): number {
   if (a === b) return 100
   if (a.includes(b) || b.includes(a)) return 90
@@ -57,45 +71,8 @@ function matchScore(a: string, b: string): number {
   return Math.round((shared * 2 / (tokA.size + tokB.size)) * 100)
 }
 
-export async function POST(req: Request) {
-  const auth = await requireRestaurant()
-  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
-  const { restaurantId } = auth
-
-  const { importId } = await req.json()
-  if (!importId) return NextResponse.json({ error: 'Missing importId' }, { status: 400 })
-
-  const { anthropic, adminSupabase } = getClients()
-
-  const { data: importRow } = await adminSupabase
-    .from('recipe_imports')
-    .select('*')
-    .eq('id', importId)
-    .single()
-
-  if (!importRow || importRow.restaurant_id !== restaurantId) {
-    return NextResponse.json({ error: 'Import not found' }, { status: 404 })
-  }
-
-  await adminSupabase.from('recipe_imports').update({ status: 'processing' }).eq('id', importId)
-
-  try {
-    // Load context: existing ingredients, recipes, and menu items
-    const [{ data: existingIngredients }, { data: existingRecipes }, { data: menuItems }] = await Promise.all([
-      adminSupabase.from('ingredients').select('id, name, normalized_name, unit, current_price').eq('restaurant_id', restaurantId).neq('status', 'archived'),
-      adminSupabase.from('recipes').select('id, name').eq('restaurant_id', restaurantId).eq('status', 'active'),
-      adminSupabase.from('menu_items').select('id, name, recipe_id').eq('restaurant_id', restaurantId).eq('status', 'active'),
-    ])
-
-    const ingredientContext = (existingIngredients || []).length > 0
-      ? `\nIngredientes ya registrados:\n${(existingIngredients || []).map((i: any) => `- ${i.name} (${i.unit})`).join('\n')}`
-      : ''
-
-    const recipeContext = (existingRecipes || []).length > 0
-      ? `\nRecetas ya existentes:\n${(existingRecipes || []).map((r: any) => `- ${r.name}`).join('\n')}`
-      : ''
-
-    const prompt = `Analizá este documento y extraé todas las recetas que encuentres.
+function buildPrompt(ingredientContext: string, recipeContext: string, chunkInfo?: string): string {
+  return `Analizá este documento y extraé todas las recetas que encuentres.${chunkInfo ? `\n${chunkInfo}` : ''}
 ${ingredientContext}
 ${recipeContext}
 
@@ -128,78 +105,161 @@ Respondé ÚNICAMENTE con JSON válido:
     }
   ]
 }`
+}
+
+async function callClaude(
+  anthropic: Anthropic,
+  messageContent: any[],
+): Promise<{ recipes: any[]; confidence: number }> {
+  const message = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 8192,
+    messages: [{ role: 'user', content: messageContent }],
+  })
+
+  const text = (message.content[0] as any).text
+  const jsonMatch = text.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) throw new Error(`No JSON in OCR response (stop_reason: ${message.stop_reason})`)
+
+  let raw = jsonMatch[0].replace(/,(\s*[\]}])/g, '$1')
+  try {
+    const parsed = JSON.parse(raw)
+    return { recipes: parsed.recipes || [], confidence: parsed.confidence || 0 }
+  } catch (e: any) {
+    console.error('[recipes/process] JSON parse failed. stop_reason:', message.stop_reason, 'raw length:', raw.length, 'tail:', raw.slice(-200))
+    throw new Error(`JSON parse error after OCR (stop_reason: ${message.stop_reason}): ${e.message}`)
+  }
+}
+
+export async function POST(req: Request) {
+  const auth = await requireRestaurant()
+  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  const { restaurantId } = auth
+
+  const { importId } = await req.json()
+  if (!importId) return NextResponse.json({ error: 'Missing importId' }, { status: 400 })
+
+  const { anthropic, adminSupabase } = getClients()
+
+  const { data: importRow } = await adminSupabase
+    .from('recipe_imports')
+    .select('*')
+    .eq('id', importId)
+    .single()
+
+  if (!importRow || importRow.restaurant_id !== restaurantId) {
+    return NextResponse.json({ error: 'Import not found' }, { status: 404 })
+  }
+
+  await adminSupabase.from('recipe_imports').update({ status: 'processing' }).eq('id', importId)
+
+  try {
+    const [{ data: existingIngredients }, { data: existingRecipes }, { data: menuItems }] = await Promise.all([
+      adminSupabase.from('ingredients').select('id, name, normalized_name, unit, current_price').eq('restaurant_id', restaurantId).neq('status', 'archived'),
+      adminSupabase.from('recipes').select('id, name').eq('restaurant_id', restaurantId).eq('status', 'active'),
+      adminSupabase.from('menu_items').select('id, name, recipe_id').eq('restaurant_id', restaurantId).eq('status', 'active'),
+    ])
+
+    const ingredientContext = (existingIngredients || []).length > 0
+      ? `\nIngredientes ya registrados:\n${(existingIngredients || []).map((i: any) => `- ${i.name} (${i.unit})`).join('\n')}`
+      : ''
+    const recipeContext = (existingRecipes || []).length > 0
+      ? `\nRecetas ya existentes:\n${(existingRecipes || []).map((r: any) => `- ${r.name}`).join('\n')}`
+      : ''
 
     const ext = importRow.file_name?.toLowerCase().split('.').pop() || ''
     const isSpreadsheet = ['xlsx', 'xls', 'csv'].includes(ext)
     const isPdf = ext === 'pdf'
 
-    const messageContent: any[] = []
+    let allRecipes: any[] = []
+    let overallConfidence = 0
 
     if (isSpreadsheet) {
-      // Parse spreadsheet server-side and send as text — Claude cannot read xlsx binary.
-      const spreadsheetText = await spreadsheetToText(importRow.file_url, ext)
-      messageContent.push({ type: 'text', text: `Datos del recetario en formato CSV/texto:\n\n${spreadsheetText}` })
+      const text = await spreadsheetToText(importRow.file_url, ext)
+      const content = [
+        { type: 'text', text: `Datos del recetario en formato CSV/texto:\n\n${text}` },
+        { type: 'text', text: buildPrompt(ingredientContext, recipeContext) },
+      ]
+      const result = await callClaude(anthropic, content)
+      allRecipes = result.recipes
+      overallConfidence = result.confidence
+
     } else if (isPdf) {
-      const base64 = await fileToBase64(importRow.file_url)
-      messageContent.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } })
+      const pdfBytes = await fetchBytes(importRow.file_url)
+      const srcDoc = await PDFDocument.load(pdfBytes)
+      const totalPages = srcDoc.getPageCount()
+
+      if (totalPages <= CHUNK_SIZE) {
+        // Small PDF — process in one call
+        const base64 = pdfBytes.toString('base64')
+        const content = [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+          { type: 'text', text: buildPrompt(ingredientContext, recipeContext) },
+        ]
+        const result = await callClaude(anthropic, content)
+        allRecipes = result.recipes
+        overallConfidence = result.confidence
+      } else {
+        // Large PDF — split into chunks and process sequentially
+        const chunks = await splitPdf(pdfBytes)
+        const confidences: number[] = []
+
+        for (let i = 0; i < chunks.length; i++) {
+          const chunkInfo = `Nota: este es el fragmento ${i + 1} de ${chunks.length} del recetario (páginas ${i * CHUNK_SIZE + 1}–${Math.min((i + 1) * CHUNK_SIZE, totalPages)} de ${totalPages}).`
+          const content = [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: chunks[i] } },
+            { type: 'text', text: buildPrompt(ingredientContext, recipeContext, chunkInfo) },
+          ]
+          const result = await callClaude(anthropic, content)
+          allRecipes.push(...result.recipes)
+          confidences.push(result.confidence)
+        }
+
+        overallConfidence = confidences.length
+          ? Math.round(confidences.reduce((s, c) => s + c, 0) / confidences.length)
+          : 0
+
+        // Deduplicate by normalized name — keep first occurrence (earlier pages win)
+        const seen = new Set<string>()
+        allRecipes = allRecipes.filter(r => {
+          const key = normalizeIngredientName(r.name)
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+      }
+
     } else {
-      const base64 = await fileToBase64(importRow.file_url)
+      // Image
+      const base64 = (await fetchBytes(importRow.file_url)).toString('base64')
       const mediaType = ext === 'png' ? 'image/png' : 'image/jpeg'
-      messageContent.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } })
-    }
-    messageContent.push({ type: 'text', text: prompt })
-
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8192,
-      messages: [{ role: 'user', content: messageContent }],
-    })
-
-    const text = (message.content[0] as any).text
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error('No JSON in OCR response')
-
-    let raw = jsonMatch[0]
-    raw = raw.replace(/,(\s*[\]}])/g, '$1')
-
-    let extracted: any
-    try {
-      extracted = JSON.parse(raw)
-    } catch (parseErr: any) {
-      console.error('[recipes/process] JSON parse failed. stop_reason:', message.stop_reason, '| raw length:', raw.length)
-      console.error('[recipes/process] raw tail:', raw.slice(-300))
-      throw new Error(`JSON parse error: ${parseErr.message} (stop_reason: ${message.stop_reason})`)
+      const content = [
+        { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+        { type: 'text', text: buildPrompt(ingredientContext, recipeContext) },
+      ]
+      const result = await callClaude(anthropic, content)
+      allRecipes = result.recipes
+      overallConfidence = result.confidence
     }
 
-    const recipes = extracted.recipes || []
-
-    // Build lookups
+    // Build lookups for matching
     const ingredientByNorm = new Map<string, any>()
-    for (const ing of existingIngredients || []) {
-      ingredientByNorm.set(ing.normalized_name, ing)
-    }
+    for (const ing of existingIngredients || []) ingredientByNorm.set(ing.normalized_name, ing)
 
     const recipeByNormName = new Map<string, any>()
-    for (const r of existingRecipes || []) {
-      recipeByNormName.set(normalizeIngredientName(r.name), r)
-    }
+    for (const r of existingRecipes || []) recipeByNormName.set(normalizeIngredientName(r.name), r)
 
-    // Menu item lookup — only items without a recipe already (unlinked = opportunity)
     const unlinkedMenuItems = (menuItems || []).filter((m: any) => !m.recipe_id)
     const menuItemNorms = unlinkedMenuItems.map((m: any) => ({
-      id: m.id,
-      name: m.name,
-      norm: normalizeIngredientName(m.name),
+      id: m.id, name: m.name, norm: normalizeIngredientName(m.name),
     }))
 
-    const itemsToInsert = recipes.map((r: any) => {
+    const itemsToInsert = allRecipes.map((r: any) => {
       const rawIngredients = (r.ingredients || []).map((ing: any) => {
         const norm = normalizeIngredientName(ing.name)
         const matched = ingredientByNorm.get(norm)
         return {
-          name: ing.name,
-          quantity: ing.quantity,
-          unit: ing.unit,
+          name: ing.name, quantity: ing.quantity, unit: ing.unit,
           matched_ingredient_id: matched?.id || null,
           confidence: matched ? 90 : 50,
           corrected: false,
@@ -209,12 +269,11 @@ Respondé ÚNICAMENTE con JSON válido:
       const normName = normalizeIngredientName(r.name)
       const existingRecipe = recipeByNormName.get(normName)
 
-      // Find best menu item match for this recipe name
-      let bestMenuMatch: { id: string; name: string; score: number } | null = null
+      let bestMenuMatch: { id: string; score: number } | null = null
       for (const mi of menuItemNorms) {
         const score = matchScore(normName, mi.norm)
         if (score >= 70 && (!bestMenuMatch || score > bestMenuMatch.score)) {
-          bestMenuMatch = { id: mi.id, name: mi.name, score }
+          bestMenuMatch = { id: mi.id, score }
         }
       }
 
@@ -239,12 +298,13 @@ Respondé ÚNICAMENTE con JSON válido:
 
     await adminSupabase.from('recipe_imports').update({
       status: 'review_required',
-      ocr_confidence: extracted.confidence,
-      extracted_data: extracted,
+      ocr_confidence: overallConfidence,
+      extracted_data: { confidence: overallConfidence, recipes: allRecipes },
       processed_at: new Date().toISOString(),
     }).eq('id', importId)
 
-    return NextResponse.json({ importId, recipeCount: itemsToInsert.length, confidence: extracted.confidence })
+    return NextResponse.json({ importId, recipeCount: itemsToInsert.length, confidence: overallConfidence })
+
   } catch (e: any) {
     await adminSupabase.from('recipe_imports').update({ status: 'failed' }).eq('id', importId)
     return NextResponse.json({ error: e.message }, { status: 500 })
