@@ -64,7 +64,8 @@ export async function POST(req: Request) {
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
   const { restaurantId } = auth
 
-  const { importId } = await req.json()
+  const body = await req.json()
+  const { importId, shift: requestShift } = body
   if (!importId) return NextResponse.json({ error: 'Missing importId' }, { status: 400 })
 
   const { anthropic, adminSupabase } = getClients()
@@ -78,6 +79,9 @@ export async function POST(req: Request) {
   if (!importRow || importRow.restaurant_id !== restaurantId) {
     return NextResponse.json({ error: 'Import not found' }, { status: 404 })
   }
+
+  // Use shift from request (user-selected at upload) or fall back to what's stored on the import row
+  const shift = requestShift || importRow.shift || 'manual'
 
   await adminSupabase.from('operations_imports').update({ status: 'processing' }).eq('id', importId)
 
@@ -135,6 +139,7 @@ export async function POST(req: Request) {
           restaurant_id: restaurantId,
           import_id: importId,
           operation_date: day.date,
+          shift,
           total_revenue: day.total_revenue,
           transactions: day.transactions,
           total_covers: day.total_covers,

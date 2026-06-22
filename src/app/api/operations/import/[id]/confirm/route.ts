@@ -33,7 +33,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const { data: draftOps } = await supabase
     .from('daily_operations')
-    .select('id, operation_date')
+    .select('id, operation_date, shift')
     .eq('import_id', importId)
     .eq('restaurant_id', restaurantId)
     .eq('status', 'draft')
@@ -45,12 +45,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const confirmed: string[] = []
 
   for (const op of draftOps) {
-    // Supersede any existing confirmed row for the same date
+    // Supersede any existing confirmed row for the same date+shift.
+    // AM and PM on the same day are independent — they do NOT supersede each other.
     await adminSupabase
       .from('daily_operations')
       .update({ status: 'superseded', updated_at: new Date().toISOString() })
       .eq('restaurant_id', restaurantId)
       .eq('operation_date', op.operation_date)
+      .eq('shift', op.shift)
       .eq('status', 'confirmed')
       .neq('id', op.id)
 

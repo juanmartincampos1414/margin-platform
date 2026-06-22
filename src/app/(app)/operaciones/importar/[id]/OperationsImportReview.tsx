@@ -26,6 +26,14 @@ interface DailyOp {
   daily_product_mix: TopSeller[]
 }
 
+const shiftLabels: Record<string, string> = { am: 'AM', pm: 'PM', full_day: 'Día completo', manual: 'Sin turno' }
+const shiftColors: Record<string, string> = {
+  am: 'bg-sky-100 text-sky-700',
+  pm: 'bg-indigo-100 text-indigo-700',
+  full_day: 'bg-emerald-100 text-emerald-700',
+  manual: 'bg-slate-100 text-slate-600',
+}
+
 interface Props { importId: string; importRow: any; operations: DailyOp[] }
 
 function fmt(n: number | null | undefined) {
@@ -83,20 +91,24 @@ export default function OperationsImportReview({ importId, importRow, operations
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Revisión de datos operativos</h1>
-          <p className="text-slate-500 mt-1">
-            <span className="font-medium">{initialOps.length} {initialOps.length === 1 ? 'día detectado' : 'días detectados'}</span>
-            {importRow.period_start && (
-              ` · ${new Date(importRow.period_start + 'T12:00:00').toLocaleDateString('es-AR')}${
-                importRow.period_end && importRow.period_end !== importRow.period_start
-                  ? ` – ${new Date(importRow.period_end + 'T12:00:00').toLocaleDateString('es-AR')}`
-                  : ''
-              }`
-            )}
-            {' · '}Confianza OCR:{' '}
-            <span className={`font-medium ${(importRow.ocr_confidence || 0) >= 80 ? 'text-emerald-600' : 'text-yellow-600'}`}>
-              {importRow.ocr_confidence || 0}%
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${shiftColors[importRow.shift || 'manual']}`}>
+              {shiftLabels[importRow.shift || 'manual']}
             </span>
-          </p>
+            <span className="text-slate-400 text-sm">
+              {initialOps.length} {initialOps.length === 1 ? 'día' : 'días'}
+              {importRow.period_start && (
+                ` · ${new Date(importRow.period_start + 'T12:00:00').toLocaleDateString('es-AR')}${
+                  importRow.period_end && importRow.period_end !== importRow.period_start
+                    ? ` – ${new Date(importRow.period_end + 'T12:00:00').toLocaleDateString('es-AR')}`
+                    : ''
+                }`
+              )}
+            </span>
+            <span className={`text-xs font-medium ${(importRow.ocr_confidence || 0) >= 80 ? 'text-emerald-600' : 'text-yellow-600'}`}>
+              OCR {importRow.ocr_confidence || 0}%
+            </span>
+          </div>
         </div>
         <button
           onClick={handleConfirm}

@@ -12,11 +12,29 @@ const sourceTypes = [
   { value: 'image', label: 'Foto / captura', icon: '📸', desc: 'Screenshot del sistema o foto del cierre' },
 ]
 
+const shifts = [
+  { value: 'am', label: 'AM', icon: '🌅', desc: 'Turno mañana' },
+  { value: 'pm', label: 'PM', icon: '🌙', desc: 'Turno tarde / noche' },
+  { value: 'full_day', label: 'Día completo', icon: '☀️', desc: 'Cierre único del día' },
+  { value: 'manual', label: 'Sin turno', icon: '—', desc: 'No aplica / no definido' },
+]
+
+// Detect shift from filename heuristics — user can always override
+function detectShiftFromFilename(name: string): string {
+  const n = name.toLowerCase()
+  if (/\bam\b|mañana|morning|apertura/.test(n)) return 'am'
+  if (/\bpm\b|noche|tarde|night|cierre/.test(n)) return 'pm'
+  if (/dia|day|completo|full/.test(n)) return 'full_day'
+  return 'manual'
+}
+
 export default function ImportarOperacionesPage() {
   const router = useRouter()
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
-  const [sourceType, setSourceType] = useState('image')
+  const [sourceType, setSourceType] = useState('cash_register')
+  const [shift, setShift] = useState('manual')
+  const [shiftAutoDetected, setShiftAutoDetected] = useState(false)
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -24,10 +42,17 @@ export default function ImportarOperacionesPage() {
   function handleFile(f: File) {
     setFile(f)
     setError(null)
-    // Auto-detect source type from extension
     const ext = f.name.split('.').pop()?.toLowerCase()
     if (ext === 'pdf') setSourceType('pdf')
     else if (['xlsx', 'xls'].includes(ext || '')) setSourceType('excel')
+
+    const detected = detectShiftFromFilename(f.name)
+    if (detected !== 'manual') {
+      setShift(detected)
+      setShiftAutoDetected(true)
+    } else {
+      setShiftAutoDetected(false)
+    }
   }
 
   async function handleImport() {
@@ -39,6 +64,7 @@ export default function ImportarOperacionesPage() {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('source_type', sourceType)
+      formData.append('shift', shift)
 
       const uploadRes = await fetch('/api/operations/import/upload', { method: 'POST', body: formData })
       const uploadData = await uploadRes.json()
@@ -48,7 +74,7 @@ export default function ImportarOperacionesPage() {
       const processRes = await fetch('/api/operations/import/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ importId: uploadData.id }),
+        body: JSON.stringify({ importId: uploadData.id, shift }),
       })
       const processData = await processRes.json()
       if (!processRes.ok) throw new Error(processData.error)
@@ -72,10 +98,10 @@ export default function ImportarOperacionesPage() {
 
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-900">Importar datos operativos</h1>
-        <p className="text-slate-500 mt-1">Subí tu cierre de caja, reporte POS o planilla de ventas — Margin extrae ventas, cubiertos, ticket promedio y mix de productos.</p>
+        <p className="text-slate-500 mt-1">Subí tu cierre de caja, reporte POS o planilla de ventas.</p>
       </div>
 
-      {/* Source type selector */}
+      {/* Source type */}
       <div className="mb-6">
         <p className="text-sm font-medium text-slate-700 mb-3">Tipo de documento</p>
         <div className="grid grid-cols-5 gap-2">
@@ -95,6 +121,40 @@ export default function ImportarOperacionesPage() {
           ))}
         </div>
         <p className="text-slate-400 text-xs mt-1.5">{sourceTypes.find(s => s.value === sourceType)?.desc}</p>
+      </div>
+
+      {/* Shift selector */}
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <p className="text-sm font-medium text-slate-700">Turno</p>
+          {shiftAutoDetected && (
+            <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full">
+              detectado del nombre del archivo
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          {shifts.map(s => (
+            <button
+              key={s.value}
+              onClick={() => { setShift(s.value); setShiftAutoDetected(false) }}
+              className={`p-3 rounded-xl border text-center transition-colors ${
+                shift === s.value
+                  ? 'border-indigo-400 bg-indigo-50 text-indigo-700'
+                  : 'border-slate-200 hover:border-slate-300 text-slate-600'
+              }`}
+            >
+              <span className="text-lg">{s.icon}</span>
+              <p className="text-xs font-medium mt-1">{s.label}</p>
+            </button>
+          ))}
+        </div>
+        <p className="text-slate-400 text-xs mt-1.5">{shifts.find(s => s.value === shift)?.desc}</p>
+        {shift === 'manual' && (
+          <p className="text-amber-600 text-xs mt-1">
+            Sin turno definido: si ya existe un cierre confirmado para la misma fecha, te avisaremos antes de reemplazarlo.
+          </p>
+        )}
       </div>
 
       {/* Drop zone */}
@@ -123,8 +183,8 @@ export default function ImportarOperacionesPage() {
           <>
             <p className="text-4xl mb-2">✅</p>
             <p className="font-semibold text-slate-900">{file.name}</p>
-            <p className="text-slate-400 text-sm mt-1">{(file.size / 1024).toFixed(0)} KB</p>
-            <button onClick={e => { e.stopPropagation(); setFile(null) }} className="text-slate-400 hover:text-slate-600 text-xs mt-2">Cambiar archivo</button>
+            <p className="text-slate-400 text-sm mt-1">{(file.size / 1024).toFixed(0)} KB · {shifts.find(s => s.value === shift)?.label}</p>
+            <button onClick={e => { e.stopPropagation(); setFile(null); setShiftAutoDetected(false) }} className="text-slate-400 hover:text-slate-600 text-xs mt-2">Cambiar archivo</button>
           </>
         ) : (
           <>
@@ -157,7 +217,7 @@ export default function ImportarOperacionesPage() {
       </button>
 
       <p className="text-slate-400 text-xs text-center mt-3">
-        Los datos extraídos se muestran para revisión antes de confirmarse. Nada se guarda como definitivo sin tu aprobación.
+        Los datos extraídos se muestran para revisión antes de confirmarse.
       </p>
     </div>
   )

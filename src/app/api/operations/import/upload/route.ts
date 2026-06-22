@@ -17,6 +17,7 @@ export async function POST(req: Request) {
   const formData = await req.formData()
   const file = formData.get('file') as File | null
   const sourceType = (formData.get('source_type') as string) || 'image'
+  const shift = (formData.get('shift') as string) || 'manual'
 
   if (!file) return NextResponse.json({ error: 'No file' }, { status: 400 })
 
@@ -40,6 +41,7 @@ export async function POST(req: Request) {
       file_name: file.name,
       file_url: publicUrl,
       source_type: sourceType,
+      shift,
       status: 'uploaded',
     })
     .select()
