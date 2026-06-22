@@ -1,6 +1,7 @@
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import InvoiceActions from './InvoiceActions'
 
 export default async function FacturaDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -21,7 +22,7 @@ export default async function FacturaDetailPage({ params }: { params: Promise<{ 
     .eq('restaurant_id', profile?.restaurant_id)
     .single()
 
-  if (!invoice) notFound()
+  if (!invoice || invoice.status === 'deleted') notFound()
 
   const statusLabels: Record<string, string> = {
     uploaded: 'Subida',
@@ -37,6 +38,8 @@ export default async function FacturaDetailPage({ params }: { params: Promise<{ 
     review_required: 'bg-orange-100 text-orange-700',
     failed: 'bg-red-100 text-red-700',
   }
+
+  const canDelete = ['failed', 'review_required', 'uploaded'].includes(invoice.status)
 
   return (
     <div className="p-8 max-w-3xl">
@@ -59,7 +62,8 @@ export default async function FacturaDetailPage({ params }: { params: Promise<{ 
             <p className="text-slate-400 text-sm">Total factura</p>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-4 text-sm">
+
+        <div className="grid grid-cols-2 gap-4 text-sm mb-6">
           {[
             { label: 'CUIT', value: invoice.supplier_cuit },
             { label: 'N° Factura', value: invoice.invoice_number },
@@ -73,6 +77,32 @@ export default async function FacturaDetailPage({ params }: { params: Promise<{ 
               <p className="font-medium text-slate-800">{f.value || '—'}</p>
             </div>
           ))}
+        </div>
+
+        {/* File access + actions */}
+        <div className="flex items-center gap-3 pt-4 border-t border-slate-100">
+          {invoice.file_url && (
+            <>
+              <a
+                href={invoice.file_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-700 font-medium"
+              >
+                📄 Ver original
+              </a>
+              <a
+                href={invoice.file_url}
+                download
+                className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
+              >
+                ⬇ Descargar
+              </a>
+            </>
+          )}
+          {canDelete && (
+            <InvoiceActions invoiceId={invoice.id} />
+          )}
         </div>
       </div>
 

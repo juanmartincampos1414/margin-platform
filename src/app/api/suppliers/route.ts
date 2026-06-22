@@ -67,12 +67,12 @@ export async function POST(req: Request) {
   if (!profile?.restaurant_id) return NextResponse.json({ error: 'No restaurant' }, { status: 400 })
 
   const body = await req.json()
-  const { name, tax_id, phone, email, payment_terms, credit_days } = body
+  const { name, tax_id, phone, email, payment_terms, credit_days, whatsapp, instagram, website, contact_name, notes, status } = body
   if (!name) return NextResponse.json({ error: 'Missing name' }, { status: 400 })
 
   const { data, error } = await supabase
     .from('suppliers')
-    .insert({ restaurant_id: profile.restaurant_id, name, tax_id, phone, email, payment_terms, credit_days })
+    .insert({ restaurant_id: profile.restaurant_id, name, tax_id, phone, email, payment_terms, credit_days, whatsapp, instagram, website, contact_name, notes, status: status || 'active' })
     .select()
     .single()
 

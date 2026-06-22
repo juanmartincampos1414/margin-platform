@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import RecipeForm from '@/components/recipes/RecipeForm'
+import MenuItemSuggestion from './MenuItemSuggestion'
 
 export default async function NuevaRecetaPage({ searchParams }: { searchParams: Promise<{ menu_item_id?: string }> }) {
   const { menu_item_id: menuItemId } = await searchParams
@@ -33,6 +34,24 @@ export default async function NuevaRecetaPage({ searchParams }: { searchParams: 
     menuItem = data
   }
 
+  // Unlinked menu items — shown as suggestions when not coming from a specific menu item.
+  let unlinkedMenuItems: { id: string; name: string; selling_price: number; category: string | null }[] = []
+  if (!menuItemId) {
+    const { data } = await supabase
+      .from('menu_items')
+      .select('id, name, selling_price, menu_categories(name)')
+      .eq('restaurant_id', profile?.restaurant_id)
+      .eq('status', 'active')
+      .is('recipe_id', null)
+      .order('name')
+    unlinkedMenuItems = (data || []).map((item: any) => ({
+      id: item.id,
+      name: item.name,
+      selling_price: item.selling_price,
+      category: item.menu_categories?.name || null,
+    }))
+  }
+
   return (
     <div className="p-8 max-w-4xl">
       <div className="mb-8">
@@ -50,6 +69,12 @@ export default async function NuevaRecetaPage({ searchParams }: { searchParams: 
             : 'Creá un plato y calculá su costo y margen en tiempo real.'}
         </p>
       </div>
+
+      {/* Suggest unlinked menu items when starting blank */}
+      {!menuItem && unlinkedMenuItems.length > 0 && (
+        <MenuItemSuggestion items={unlinkedMenuItems} />
+      )}
+
       <RecipeForm
         ingredients={ingredients || []}
         restaurantId={profile?.restaurant_id}

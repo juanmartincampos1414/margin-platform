@@ -2,6 +2,7 @@ import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { formatCurrency } from '@/lib/utils'
+import SupplierContactEditor from './SupplierContactEditor'
 
 function ScoreBadge({ score }: { score: number | null }) {
   if (score === null) return <span className="text-slate-400">Sin datos aún</span>
@@ -216,6 +217,22 @@ export default async function ProveedorDetailPage({ params }: { params: Promise<
           </div>
         )}
       </div>
+
+      {/* Contact info — Procurement-ready fields */}
+      <SupplierContactEditor
+        supplierId={supplier.id}
+        initialData={{
+          phone: supplier.phone || '',
+          email: supplier.email || '',
+          whatsapp: (supplier as any).whatsapp || '',
+          instagram: (supplier as any).instagram || '',
+          website: (supplier as any).website || '',
+          contact_name: (supplier as any).contact_name || '',
+          payment_terms: supplier.payment_terms || '',
+          credit_days: supplier.credit_days ?? null,
+          notes: (supplier as any).notes || '',
+        }}
+      />
 
       {/* Invoice history */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6">

@@ -13,7 +13,8 @@ const nav = [
   { href: '/ingredientes', label: 'Ingredientes', icon: '🥩' },
   { href: '/facturas', label: 'Facturas OCR', icon: '📄' },
   { href: '/proveedores', label: 'Proveedores', icon: '🚚' },
-  { href: '/analisis', label: 'Análisis', icon: '📊' },
+  { href: '/operaciones', label: 'Operaciones', icon: '📊' },
+  { href: '/analisis', label: 'Análisis', icon: '🤖' },
 ]
 
 interface Props {

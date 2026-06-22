@@ -44,7 +44,7 @@ export async function middleware(request: NextRequest) {
   if (path.startsWith('/dashboard') || path.startsWith('/recetas') ||
       path.startsWith('/ingredientes') || path.startsWith('/facturas') ||
       path.startsWith('/menu') || path.startsWith('/analisis') ||
-      path.startsWith('/proveedores')) {
+      path.startsWith('/proveedores') || path.startsWith('/operaciones')) {
     if (!user) {
       return NextResponse.redirect(new URL('/login', request.url))
     }

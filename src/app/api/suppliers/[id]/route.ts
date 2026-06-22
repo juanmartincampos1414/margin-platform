@@ -77,11 +77,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (!profile?.restaurant_id) return NextResponse.json({ error: 'No restaurant' }, { status: 400 })
 
   const body = await req.json()
-  const { name, tax_id, phone, email, payment_terms, credit_days, status } = body
+  const { name, tax_id, phone, email, payment_terms, credit_days, status, whatsapp, instagram, website, contact_name, notes } = body
 
   const { data, error } = await supabase
     .from('suppliers')
-    .update({ name, tax_id, phone, email, payment_terms, credit_days, status })
+    .update({ name, tax_id, phone, email, payment_terms, credit_days, status, whatsapp, instagram, website, contact_name, notes, updated_at: new Date().toISOString() })
     .eq('id', id)
     .eq('restaurant_id', profile.restaurant_id)
     .select()

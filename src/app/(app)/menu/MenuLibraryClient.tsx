@@ -181,9 +181,9 @@ export default function MenuLibraryClient({ menuItems: initial, categories, reci
       </div>
 
       {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md">
-            <h3 className="font-bold text-slate-900 text-lg mb-5">Editar producto</h3>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowForm(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <h3 className="font-bold text-slate-900 text-lg mb-5">Editar plato del menú</h3>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">Nombre</label>
@@ -201,7 +201,27 @@ export default function MenuLibraryClient({ menuItems: initial, categories, reci
                 <input type="number" value={form.selling_price} onChange={e => setForm(f => ({ ...f, selling_price: e.target.value }))} className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500" />
               </div>
             </div>
-            <div className="flex gap-3 mt-6">
+
+            {/* Link to full recipe editor */}
+            {editingId && (() => {
+              const editingItem = menuItems.find(i => i.id === editingId)
+              return editingItem?.recipes ? (
+                <div className="mt-4 p-3 bg-slate-50 rounded-xl flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-slate-400">Receta vinculada</p>
+                    <p className="text-sm font-medium text-slate-700">{editingItem.recipes.name}</p>
+                  </div>
+                  <a
+                    href={`/recetas/${editingItem.recipes.id}?back=menu`}
+                    className="text-indigo-600 hover:text-indigo-700 text-sm font-medium shrink-0 ml-3"
+                  >
+                    Editar receta completa →
+                  </a>
+                </div>
+              ) : null
+            })()}
+
+            <div className="flex gap-3 mt-5">
               <button onClick={() => setShowForm(false)} className="flex-1 border border-slate-200 text-slate-600 py-2.5 rounded-xl text-sm font-medium hover:bg-slate-50">Cancelar</button>
               <button onClick={handleSave} disabled={saving} className="flex-1 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white py-2.5 rounded-xl text-sm font-medium transition-colors">
                 {saving ? 'Guardando...' : 'Guardar'}

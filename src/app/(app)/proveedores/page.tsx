@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { formatCurrency } from '@/lib/utils'
+import NewSupplierButton from './NewSupplierButton'
 
 function RiskBadge({ level }: { level: string | null }) {
   if (!level) return <span className="text-slate-300 text-xs">—</span>
@@ -97,6 +98,7 @@ export default async function ProveedoresPage() {
           <Link href="/proveedores/criticos" className="border border-slate-200 text-slate-600 px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-50">
             ⚠️ Críticos
           </Link>
+          <NewSupplierButton />
         </div>
       </div>
 
