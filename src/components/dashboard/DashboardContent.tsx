@@ -14,20 +14,38 @@ interface Recommendation {
   priority: string
 }
 
+interface PriceChange {
+  name: string
+  oldPrice: number
+  newPrice: number
+  pct: number
+  ingredientId: string
+}
+
+interface HighRiskSupplier {
+  name: string
+  id: string
+}
+
 interface Props {
   restaurantName: string
+  // Qué pasó
   avgMargin: number
+  avgFoodCost: number
   pctCosted: number
   costedCount: number
   totalMenuItems: number
   opsRevenue: number
+  opsCovers: number
   opsAvgTicket: number | null
   hasOpsData: boolean
+  // Qué requiere atención
   invoicesToReview: number
-  pendingRecommendationsCount: number
-  recommendations: Recommendation[]
+  highRiskSuppliers: HighRiskSupplier[]
   unlinkedMenuItemCount: number
-  highRiskSuppliers: string[]
+  significantPriceChanges: PriceChange[]
+  // Qué debería hacer
+  recommendations: Recommendation[]
 }
 
 const priorityColor: Record<string, string> = {
@@ -37,184 +55,232 @@ const priorityColor: Record<string, string> = {
 }
 const priorityLabel: Record<string, string> = { high: 'Alta', medium: 'Media', low: 'Baja' }
 
-// Map recommendation type to the most specific actionable destination
-const typeDestination: Record<string, string> = {
-  negotiate_supplier: '/proveedores',
-  adjust_price: '/analisis',
-  review_ingredient: '/ingredientes',
-  menu_mix: '/analisis',
-  link_recipes: '/analisis',
+const recConfig: Record<string, { cta: string; dest: string; icon: string }> = {
+  negotiate_supplier:  { cta: 'Ver proveedor →',   dest: '/proveedores',   icon: '🤝' },
+  adjust_price:        { cta: 'Ver análisis →',     dest: '/analisis',      icon: '💰' },
+  review_ingredient:   { cta: 'Ir a ingrediente →', dest: '/ingredientes',  icon: '🔍' },
+  menu_mix:            { cta: 'Ver análisis →',     dest: '/analisis',      icon: '📊' },
+  link_recipes:        { cta: 'Costear platos →',   dest: '/analisis',      icon: '🍽' },
 }
-const typeCTA: Record<string, string> = {
-  negotiate_supplier: 'Ver proveedores →',
-  adjust_price: 'Ver análisis →',
-  review_ingredient: 'Ir a ingredientes →',
-  menu_mix: 'Ver análisis →',
-  link_recipes: 'Costear platos →',
+
+function StatCard({ label, value, sub, href, alert }: { label: string; value: string; sub?: string; href?: string; alert?: boolean }) {
+  const cls = `bg-white border rounded-2xl p-5 ${alert ? 'border-red-200' : 'border-slate-200'} ${href ? 'hover:border-indigo-300 hover:shadow-sm transition-all cursor-pointer' : ''}`
+  const inner = (
+    <>
+      <p className="text-slate-400 text-xs mb-2">{label}</p>
+      <p className={`text-2xl font-bold ${alert ? 'text-red-600' : 'text-slate-900'}`}>{value}</p>
+      {sub && <p className="text-slate-400 text-xs mt-1">{sub}</p>}
+    </>
+  )
+  return href ? <Link href={href} className={cls}>{inner}</Link> : <div className={cls}>{inner}</div>
 }
 
 export default function DashboardContent({
   restaurantName,
-  avgMargin, pctCosted, costedCount, totalMenuItems,
-  opsRevenue, opsAvgTicket, hasOpsData,
-  invoicesToReview, pendingRecommendationsCount,
-  recommendations, unlinkedMenuItemCount, highRiskSuppliers,
+  avgMargin, avgFoodCost, pctCosted, costedCount, totalMenuItems,
+  opsRevenue, opsCovers, opsAvgTicket, hasOpsData,
+  invoicesToReview, highRiskSuppliers, unlinkedMenuItemCount, significantPriceChanges,
+  recommendations,
 }: Props) {
   const router = useRouter()
   const [recs, setRecs] = useState(recommendations)
-  const [activeRec, setActiveRec] = useState<Recommendation | null>(null)
-  const [acting, setActing] = useState(false)
+  const [dismissing, setDismissing] = useState<string | null>(null)
 
-  async function handleRecAction(rec: Recommendation, status: 'reviewed' | 'dismissed') {
-    setActing(true)
+  async function dismiss(rec: Recommendation) {
+    setDismissing(rec.id)
     await fetch(`/api/ai/recommendations/${rec.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status: 'dismissed' }),
     })
     setRecs(prev => prev.filter(r => r.id !== rec.id))
-    setActiveRec(null)
-    setActing(false)
-    router.refresh()
+    setDismissing(null)
+  }
+
+  async function act(rec: Recommendation) {
+    await fetch(`/api/ai/recommendations/${rec.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'reviewed' }),
+    })
+    setRecs(prev => prev.filter(r => r.id !== rec.id))
   }
 
   const today = new Date().toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
 
+  const alertCount = (invoicesToReview > 0 ? 1 : 0)
+    + highRiskSuppliers.length
+    + (unlinkedMenuItemCount > 0 ? 1 : 0)
+    + significantPriceChanges.length
+
   return (
-    <div className="p-8">
+    <div className="p-8 max-w-6xl">
       {/* Header */}
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Buenos días</h1>
+          <p className="text-slate-500 mt-0.5">{restaurantName} · {today}</p>
+        </div>
+        {alertCount > 0 && (
+          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-2">
+            <span className="text-red-500 text-sm font-semibold">{alertCount} {alertCount === 1 ? 'alerta' : 'alertas'} hoy</span>
+          </div>
+        )}
+      </div>
+
+      {/* ── SECCIÓN 1: Qué pasó ── */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">Buenos días</h1>
-        <p className="text-slate-500 mt-1">{restaurantName} · {today}</p>
-      </div>
-
-      {/* Alert banners — only shown when actionable */}
-      <div className="space-y-3 mb-6">
-        {invoicesToReview > 0 && (
-          <Link href="/facturas?status=review_required" className="flex items-center justify-between bg-orange-50 border border-orange-200 rounded-2xl px-5 py-3.5 hover:border-orange-300 transition-colors">
-            <div className="flex items-center gap-3">
-              <span className="text-lg">⚠️</span>
-              <p className="text-sm font-medium text-slate-900">
-                {invoicesToReview} {invoicesToReview === 1 ? 'factura requiere' : 'facturas requieren'} revisión
-              </p>
-            </div>
-            <span className="text-orange-600 text-sm font-medium">Revisar →</span>
-          </Link>
-        )}
-        {highRiskSuppliers.length > 0 && (
-          <Link href="/proveedores" className="flex items-center justify-between bg-red-50 border border-red-200 rounded-2xl px-5 py-3.5 hover:border-red-300 transition-colors">
-            <div className="flex items-center gap-3">
-              <span className="text-lg">🔴</span>
-              <p className="text-sm font-medium text-slate-900">
-                Proveedor{highRiskSuppliers.length > 1 ? 'es' : ''} en riesgo alto: <span className="text-red-700">{highRiskSuppliers.join(', ')}</span>
-              </p>
-            </div>
-            <span className="text-red-600 text-sm font-medium">Ver proveedores →</span>
-          </Link>
-        )}
-        {unlinkedMenuItemCount > 0 && (
-          <Link href="/analisis" className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3.5 hover:border-amber-300 transition-colors">
-            <div className="flex items-center gap-3">
-              <span className="text-lg">🍽</span>
-              <p className="text-sm font-medium text-slate-900">
-                {unlinkedMenuItemCount} {unlinkedMenuItemCount === 1 ? 'plato sin receta' : 'platos sin receta'} — no se puede calcular su margen
-              </p>
-            </div>
-            <span className="text-amber-700 text-sm font-medium">Costear →</span>
-          </Link>
-        )}
-      </div>
-
-      {/* KPI cards — what matters at 8 AM */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {/* Revenue */}
-        <Link href="/operaciones" className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-indigo-300 hover:shadow-sm transition-all">
-          <p className="text-slate-400 text-xs mb-2">Ventas · últimos 7 días</p>
-          {hasOpsData ? (
-            <>
-              <p className="text-2xl font-bold text-slate-900">{formatCurrency(opsRevenue)}</p>
-              {opsAvgTicket && <p className="text-slate-400 text-xs mt-1">ticket prom. {formatCurrency(opsAvgTicket)}</p>}
-            </>
-          ) : (
-            <>
-              <p className="text-2xl font-bold text-slate-400">—</p>
-              <p className="text-slate-400 text-xs mt-1">Importar primer cierre →</p>
-            </>
-          )}
-        </Link>
-
-        {/* Avg margin */}
-        <Link href="/analisis" className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-indigo-300 hover:shadow-sm transition-all">
-          <p className="text-slate-400 text-xs mb-2">Margen bruto promedio</p>
-          <p className={`text-2xl font-bold ${getMarginColor(avgMargin)}`}>{costedCount > 0 ? formatPercent(avgMargin) : '—'}</p>
-          <p className="text-slate-400 text-xs mt-1">sobre {costedCount} platos costeados</p>
-        </Link>
-
-        {/* % costeada */}
-        <Link href="/menu/salud" className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-indigo-300 hover:shadow-sm transition-all">
-          <p className="text-slate-400 text-xs mb-2">Carta costeada</p>
-          <p className={`text-2xl font-bold ${pctCosted >= 80 ? 'text-emerald-600' : pctCosted >= 50 ? 'text-yellow-600' : 'text-red-500'}`}>
-            {totalMenuItems > 0 ? formatPercent(pctCosted) : '—'}
-          </p>
-          <p className="text-slate-400 text-xs mt-1">{costedCount} de {totalMenuItems} platos</p>
-        </Link>
-
-        {/* AI recommendations */}
-        <div
-          className={`bg-white border rounded-2xl p-5 cursor-pointer hover:shadow-sm transition-all ${recs.length > 0 ? 'border-indigo-200 hover:border-indigo-300' : 'border-slate-200'}`}
-          onClick={() => recs.length > 0 && setActiveRec(recs[0])}
-        >
-          <p className="text-slate-400 text-xs mb-2">Recomendaciones IA</p>
-          <p className={`text-2xl font-bold ${recs.length > 0 ? 'text-indigo-600' : 'text-slate-400'}`}>{pendingRecommendationsCount}</p>
-          <p className="text-slate-400 text-xs mt-1">{recs.length > 0 ? 'tap para ver la primera' : 'sin pendientes'}</p>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Qué pasó · últimos 7 días</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <StatCard
+            label="Ventas"
+            value={hasOpsData ? formatCurrency(opsRevenue) : '—'}
+            sub={hasOpsData ? 'últimos 7 días' : 'sin datos aún'}
+            href="/operaciones"
+          />
+          <StatCard
+            label="Cubiertos"
+            value={hasOpsData && opsCovers > 0 ? opsCovers.toLocaleString('es-AR') : '—'}
+            sub={hasOpsData ? 'atendidos' : ''}
+            href="/operaciones"
+          />
+          <StatCard
+            label="Ticket promedio"
+            value={opsAvgTicket ? formatCurrency(opsAvgTicket) : '—'}
+            sub="por transacción"
+            href="/operaciones"
+          />
+          <StatCard
+            label="Margen promedio"
+            value={costedCount > 0 ? formatPercent(avgMargin) : '—'}
+            sub={`${costedCount} platos costeados`}
+            href="/analisis"
+          />
+          <StatCard
+            label="Food Cost"
+            value={costedCount > 0 ? formatPercent(avgFoodCost) : '—'}
+            sub="costo / precio venta"
+            href="/analisis"
+          />
+          <StatCard
+            label="Carta costeada"
+            value={totalMenuItems > 0 ? formatPercent(pctCosted) : '—'}
+            sub={`${costedCount} de ${totalMenuItems} platos`}
+            href="/menu/salud"
+          />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recommendations with actionable CTAs */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-6">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="font-semibold text-slate-900">Recomendaciones IA</h2>
-            <Link href="/analisis" className="text-indigo-600 text-sm hover:text-indigo-700">Ver análisis →</Link>
+      {/* ── SECCIÓN 2: Qué requiere atención ── */}
+      {alertCount > 0 && (
+        <div className="mb-8">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Qué requiere atención</p>
+          <div className="space-y-2">
+            {invoicesToReview > 0 && (
+              <Link href="/facturas?status=review_required" className="flex items-center justify-between bg-white border border-orange-200 rounded-2xl px-5 py-4 hover:border-orange-300 hover:shadow-sm transition-all">
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">📄</span>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{invoicesToReview} {invoicesToReview === 1 ? 'factura requiere revisión' : 'facturas requieren revisión'}</p>
+                    <p className="text-xs text-slate-500">El OCR no pudo procesar estos documentos con suficiente confianza</p>
+                  </div>
+                </div>
+                <span className="text-orange-600 text-sm font-semibold shrink-0">Revisar →</span>
+              </Link>
+            )}
+
+            {highRiskSuppliers.map(s => (
+              <Link key={s.id} href={`/proveedores/${s.id}`} className="flex items-center justify-between bg-white border border-red-200 rounded-2xl px-5 py-4 hover:border-red-300 hover:shadow-sm transition-all">
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">🔴</span>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{s.name} — proveedor en riesgo alto</p>
+                    <p className="text-xs text-slate-500">Variación de precios, frecuencia de compra o inactividad prolongada</p>
+                  </div>
+                </div>
+                <span className="text-red-600 text-sm font-semibold shrink-0">Ver proveedor →</span>
+              </Link>
+            ))}
+
+            {significantPriceChanges.map(pc => (
+              <Link key={pc.ingredientId} href={`/ingredientes`} className="flex items-center justify-between bg-white border border-amber-200 rounded-2xl px-5 py-4 hover:border-amber-300 hover:shadow-sm transition-all">
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">📈</span>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">
+                      {pc.name} {pc.pct > 0 ? 'subió' : 'bajó'} {Math.abs(pc.pct)}% esta semana
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {formatCurrency(pc.oldPrice)} → {formatCurrency(pc.newPrice)} · puede afectar el margen de platos que lo usan
+                    </p>
+                  </div>
+                </div>
+                <span className="text-amber-700 text-sm font-semibold shrink-0">Ver impacto →</span>
+              </Link>
+            ))}
+
+            {unlinkedMenuItemCount > 0 && (
+              <Link href="/analisis" className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-indigo-300 hover:shadow-sm transition-all">
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">🍽</span>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{unlinkedMenuItemCount} {unlinkedMenuItemCount === 1 ? 'plato sin receta vinculada' : 'platos sin receta vinculada'}</p>
+                    <p className="text-xs text-slate-500">Sin receta no hay margen calculado — son puntos ciegos en tu P&L</p>
+                  </div>
+                </div>
+                <span className="text-indigo-600 text-sm font-semibold shrink-0">Costear →</span>
+              </Link>
+            )}
           </div>
+        </div>
+      )}
+
+      {/* ── SECCIÓN 3: Qué debería hacer ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* AI recommendations as actions */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-slate-900">Qué debería hacer ahora</h2>
+            {recs.length > 0 && <span className="text-xs text-slate-400">{recs.length} pendientes</span>}
+          </div>
+
           {recs.length === 0 ? (
             <div className="text-center py-8">
-              <p className="text-4xl mb-3">✅</p>
-              <p className="text-slate-500 text-sm">Sin recomendaciones pendientes</p>
+              <p className="text-4xl mb-2">✅</p>
+              <p className="text-slate-500 text-sm">Sin acciones pendientes</p>
+              <p className="text-slate-400 text-xs mt-1">Cuando haya oportunidades de mejora, aparecerán aquí</p>
             </div>
           ) : (
             <div className="space-y-2">
               {recs.map(rec => {
-                const dest = typeDestination[rec.type] || '/analisis'
-                const cta = typeCTA[rec.type] || 'Ver →'
+                const cfg = recConfig[rec.type] || { cta: 'Ver →', dest: '/analisis', icon: '💡' }
                 return (
-                  <div key={rec.id} className="flex items-start gap-3 p-3 rounded-xl bg-slate-50 border border-transparent">
+                  <div key={rec.id} className="flex items-start gap-3 p-4 rounded-xl border border-slate-100 bg-slate-50">
+                    <span className="text-xl shrink-0 mt-0.5">{cfg.icon}</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-slate-800 text-sm font-medium leading-snug">{rec.title}</p>
-                      <p className="text-slate-500 text-xs mt-0.5 line-clamp-1">{rec.description}</p>
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${priorityColor[rec.priority] || priorityColor.medium}`}>
-                          {priorityLabel[rec.priority] || rec.priority}
-                        </span>
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm font-semibold text-slate-900 leading-snug">{rec.title}</p>
                         {rec.estimated_impact_pp != null && (
-                          <span className="text-emerald-600 text-xs font-semibold">+{rec.estimated_impact_pp} pp</span>
+                          <span className="text-emerald-600 text-xs font-bold shrink-0 mt-0.5">+{rec.estimated_impact_pp} pp</span>
                         )}
                       </div>
-                    </div>
-                    <div className="flex flex-col gap-1.5 shrink-0">
-                      <Link
-                        href={dest}
-                        onClick={() => handleRecAction(rec, 'reviewed')}
-                        className="text-xs bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg font-medium transition-colors whitespace-nowrap"
-                      >
-                        {cta}
-                      </Link>
-                      <button
-                        onClick={() => handleRecAction(rec, 'dismissed')}
-                        className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
-                      >
-                        Descartar
-                      </button>
+                      <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{rec.description}</p>
+                      <div className="flex items-center gap-2 mt-3">
+                        <Link
+                          href={cfg.dest}
+                          onClick={() => act(rec)}
+                          className="text-xs bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
+                        >
+                          {cfg.cta}
+                        </Link>
+                        <button
+                          onClick={() => dismiss(rec)}
+                          disabled={dismissing === rec.id}
+                          className="text-xs text-slate-400 hover:text-slate-600 transition-colors disabled:opacity-50"
+                        >
+                          {dismissing === rec.id ? '...' : 'Descartar'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )
@@ -225,15 +291,15 @@ export default function DashboardContent({
 
         {/* Quick actions */}
         <div className="bg-white border border-slate-200 rounded-2xl p-6">
-          <h2 className="font-semibold text-slate-900 mb-5">Acciones rápidas</h2>
+          <h2 className="font-semibold text-slate-900 mb-4">Acciones rápidas</h2>
           <div className="grid grid-cols-2 gap-3">
             {[
-              { href: '/facturas/subir', icon: '📤', label: 'Subir factura', sub: 'OCR automático' },
-              { href: '/operaciones/importar', icon: '📊', label: 'Importar cierre', sub: 'ventas del día' },
-              { href: '/recetas/importar', icon: '🍽', label: 'Importar recetas', sub: 'costear la carta' },
-              { href: '/recetas/nueva', icon: '➕', label: 'Nueva receta', sub: 'desde cero' },
-              { href: '/menu/importar', icon: '📋', label: 'Importar carta', sub: 'menú completo' },
-              { href: '/ingredientes', icon: '✏️', label: 'Actualizar precios', sub: 'ingredientes' },
+              { href: '/facturas/subir',       icon: '📤', label: 'Subir factura',      sub: 'OCR automático' },
+              { href: '/operaciones/importar', icon: '📊', label: 'Importar cierre',    sub: 'ventas del día' },
+              { href: '/recetas/importar',     icon: '🍽', label: 'Importar recetas',   sub: 'costear la carta' },
+              { href: '/recetas/nueva',        icon: '➕', label: 'Nueva receta',       sub: 'desde cero' },
+              { href: '/menu/importar',        icon: '📋', label: 'Importar carta',     sub: 'menú completo' },
+              { href: '/ingredientes',         icon: '✏️', label: 'Actualizar precios', sub: 'ingredientes' },
             ].map(action => (
               <Link
                 key={action.href}
@@ -250,46 +316,6 @@ export default function DashboardContent({
           </div>
         </div>
       </div>
-
-      {/* Recommendation drawer */}
-      {activeRec && (
-        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-4" onClick={() => setActiveRec(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl" onClick={e => e.stopPropagation()}>
-            <div className="p-6">
-              <div className="flex items-start justify-between mb-4">
-                <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${priorityColor[activeRec.priority] || priorityColor.medium}`}>
-                  {priorityLabel[activeRec.priority] || activeRec.priority} prioridad
-                </span>
-                <button onClick={() => setActiveRec(null)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
-              </div>
-              <h3 className="text-slate-900 font-bold text-lg mb-2">{activeRec.title}</h3>
-              <p className="text-slate-600 text-sm leading-relaxed mb-5">{activeRec.description}</p>
-              {activeRec.estimated_impact_pp != null && (
-                <div className="flex items-center gap-2 p-3 bg-emerald-50 rounded-xl mb-5">
-                  <span className="text-emerald-600 font-bold">+{activeRec.estimated_impact_pp} pp</span>
-                  <span className="text-emerald-600 text-sm">de mejora estimada en margen</span>
-                </div>
-              )}
-              <div className="flex gap-3">
-                <button
-                  onClick={() => handleRecAction(activeRec, 'dismissed')}
-                  disabled={acting}
-                  className="flex-1 border border-slate-200 text-slate-600 py-2.5 rounded-xl text-sm font-medium hover:bg-slate-50 disabled:opacity-50 transition-colors"
-                >
-                  Descartar
-                </button>
-                <Link
-                  href={typeDestination[activeRec.type] || '/analisis'}
-                  onClick={() => handleRecAction(activeRec, 'reviewed')}
-                  className="flex-1 bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-xl text-sm font-medium transition-colors text-center"
-                >
-                  {typeCTA[activeRec.type] || 'Ir →'}
-                </Link>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
