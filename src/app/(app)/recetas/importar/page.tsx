@@ -9,6 +9,7 @@ export default function ImportarRecetasPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'error'>('idle')
+  const [progress, setProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
 
@@ -31,25 +32,40 @@ export default function ImportarRecetasPage() {
       if (!uploadRes.ok) throw new Error(uploadData.error)
 
       setStatus('processing')
-      const processRes = await fetch('/api/recipes/import/process', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ importId: uploadData.id }),
-      })
+      setProgress('Iniciando extracción...')
 
-      // Vercel may return plain text (e.g. "Request Ended Unexpectedly") on timeout —
-      // always check content-type before calling .json() to show a useful error.
-      const contentType = processRes.headers.get('content-type') || ''
-      if (!contentType.includes('application/json')) {
-        const text = await processRes.text()
-        if (text.toLowerCase().includes('timeout') || text.toLowerCase().includes('ended') || processRes.status >= 504) {
-          throw new Error('El procesamiento tardó demasiado. El archivo puede ser muy grande — intentá con un PDF de menos páginas o dividilo en partes.')
+      // Loop por chunks — cada llamada procesa CHUNK_SIZE páginas.
+      // Esto mantiene cada request dentro del límite de timeout de Vercel.
+      let startPage = 0
+      let done = false
+      while (!done) {
+        const processRes = await fetch('/api/recipes/import/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ importId: uploadData.id, startPage }),
+        })
+
+        // Vercel puede devolver texto plano en caso de timeout — verificar Content-Type primero.
+        const contentType = processRes.headers.get('content-type') || ''
+        if (!contentType.includes('application/json')) {
+          const text = await processRes.text()
+          if (processRes.status >= 500 || text.toLowerCase().includes('timeout') || text.toLowerCase().includes('ended')) {
+            throw new Error('El servidor tardó demasiado. Intentá de nuevo — el progreso ya guardado se mantiene.')
+          }
+          throw new Error(`Error inesperado del servidor (${processRes.status}). Intentá de nuevo.`)
         }
-        throw new Error(`Error inesperado del servidor (${processRes.status}). Intentá de nuevo.`)
-      }
 
-      const processData = await processRes.json()
-      if (!processRes.ok) throw new Error(processData.error || 'Error al procesar')
+        const processData = await processRes.json()
+        if (!processRes.ok) throw new Error(processData.error || 'Error al procesar')
+
+        done = processData.done
+        if (!done && processData.nextPage != null) {
+          startPage = processData.nextPage
+          setProgress(
+            `Procesando páginas ${processData.processedPages} de ${processData.totalPages}... (${processData.recipesFoundInChunk} recetas detectadas en este bloque)`
+          )
+        }
+      }
 
       router.push(`/recetas/importar/${uploadData.id}`)
     } catch (e: any) {
@@ -137,9 +153,7 @@ export default function ImportarRecetasPage() {
           <p className="text-indigo-700">
             {status === 'uploading'
               ? 'Subiendo archivo...'
-              : file && file.size > 2 * 1024 * 1024
-                ? 'Claude está procesando el recetario en partes... PDFs grandes pueden tardar 1-2 minutos.'
-                : 'Claude está extrayendo las recetas... esto puede tomar hasta 30 segundos.'}
+              : progress || 'Iniciando extracción con IA...'}
           </p>
         </div>
       )}
