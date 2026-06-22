@@ -117,14 +117,25 @@ Respondé ÚNICAMENTE con JSON válido:
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [{ role: 'user', content: messageContent }],
     })
 
     const text = (message.content[0] as any).text
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) throw new Error('No JSON in OCR response')
-    const extracted = JSON.parse(jsonMatch[0])
+
+    let raw = jsonMatch[0]
+    raw = raw.replace(/,(\s*[\]}])/g, '$1')  // trailing commas
+
+    let extracted: any
+    try {
+      extracted = JSON.parse(raw)
+    } catch (parseErr: any) {
+      console.error('[recipes/process] JSON parse failed. stop_reason:', message.stop_reason, '| raw length:', raw.length)
+      console.error('[recipes/process] raw tail:', raw.slice(-300))
+      throw new Error(`JSON parse error: ${parseErr.message} (stop_reason: ${message.stop_reason})`)
+    }
 
     const recipes = extracted.recipes || []
 
