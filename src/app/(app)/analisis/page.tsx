@@ -44,20 +44,23 @@ export default async function AnalisisPage() {
         <p className="text-slate-500 mt-1">Rendimiento por plato de tu carta activa</p>
       </div>
 
-      {/* Summary */}
+      {/* Summary — KPIs navigate to filtered sections of the table below */}
       <div className="grid grid-cols-3 gap-4 mb-8">
-        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+        <a href="#ranking" className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-indigo-300 hover:shadow-sm transition-all">
           <p className="text-slate-400 text-xs mb-1">Margen promedio</p>
           <p className={`text-3xl font-bold ${getMarginColor(avgMargin)}`}>{formatPercent(avgMargin)}</p>
-        </div>
-        <div className="bg-red-50 border border-red-200 rounded-2xl p-5">
+          <p className="text-slate-400 text-xs mt-1">sobre {analyzed.length} recetas activas</p>
+        </a>
+        <a href="#criticos" className="bg-red-50 border border-red-200 rounded-2xl p-5 hover:border-red-300 hover:shadow-sm transition-all">
           <p className="text-red-500 text-xs mb-1">Platos críticos (&lt;35%)</p>
           <p className="text-3xl font-bold text-red-700">{belowThreshold}</p>
-        </div>
-        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5">
+          <p className="text-red-400 text-xs mt-1">ver listado ↓</p>
+        </a>
+        <a href="#excelentes" className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 hover:border-emerald-300 hover:shadow-sm transition-all">
           <p className="text-emerald-600 text-xs mb-1">Platos excelentes (≥60%)</p>
           <p className="text-3xl font-bold text-emerald-700">{excellent}</p>
-        </div>
+          <p className="text-emerald-500 text-xs mt-1">ver listado ↓</p>
+        </a>
       </div>
 
       {/* Ranked table */}

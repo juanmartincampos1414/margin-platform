@@ -32,6 +32,7 @@ export default async function FacturasPage() {
     .from('invoices')
     .select('id, file_name, supplier_name, invoice_number, invoice_date, total_amount, status, ocr_confidence, created_at')
     .eq('restaurant_id', profile?.restaurant_id)
+    .neq('status', 'deleted')
     .order('created_at', { ascending: false })
 
   return (
