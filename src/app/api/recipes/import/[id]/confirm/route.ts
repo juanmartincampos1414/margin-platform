@@ -32,7 +32,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   if (!importRow) return NextResponse.json({ error: 'Import not found' }, { status: 404 })
 
-  const { data: items } = await supabase
+  // Transition all pending items to confirmed — handles the "Confirmar todas" case
+  // where individual PATCH calls may not have fired yet.
+  await adminSupabase
+    .from('recipe_import_items')
+    .update({ status: 'confirmed' })
+    .eq('import_id', importId)
+    .eq('restaurant_id', restaurantId)
+    .eq('status', 'pending')
+
+  const { data: items } = await adminSupabase
     .from('recipe_import_items')
     .select('*')
     .eq('import_id', importId)
@@ -40,7 +49,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .eq('status', 'confirmed')
 
   if (!items || items.length === 0) {
-    return NextResponse.json({ error: 'No confirmed items to materialize' }, { status: 400 })
+    return NextResponse.json({ error: 'No items to materialize' }, { status: 400 })
   }
 
   // Fresh ingredient lookup (includes any created in this session)

@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
 import { requireRestaurant } from '@/lib/auth'
 import { normalizeIngredientName } from '@/lib/utils'
+import * as XLSX from 'xlsx'
 
 function getClients() {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -17,6 +18,30 @@ async function fileToBase64(url: string) {
   const res = await fetch(url)
   const buf = await res.arrayBuffer()
   return Buffer.from(buf).toString('base64')
+}
+
+// Convert xlsx/xls/csv to a compact text representation for Claude.
+// Claude cannot read xlsx binary — we parse server-side and send CSV text.
+// Limits each sheet to 500 rows to stay within token budget.
+async function spreadsheetToText(url: string, ext: string): Promise<string> {
+  const res = await fetch(url)
+  const buf = await res.arrayBuffer()
+
+  if (ext === 'csv') {
+    return Buffer.from(buf).toString('utf-8').slice(0, 80000)
+  }
+
+  const workbook = XLSX.read(buf, { type: 'buffer' })
+  const parts: string[] = []
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName]
+    const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false })
+    const rows = csv.split('\n').filter(r => r.trim()).slice(0, 500)
+    if (rows.length > 0) {
+      parts.push(`=== Hoja: ${sheetName} ===\n${rows.join('\n')}`)
+    }
+  }
+  return parts.join('\n\n').slice(0, 80000)
 }
 
 // Fuzzy match: how similar are two normalized strings?
@@ -104,19 +129,22 @@ Respondé ÚNICAMENTE con JSON válido:
   ]
 }`
 
-    const isPdf = importRow.file_name?.toLowerCase().endsWith('.pdf')
-    const ext = importRow.file_name?.toLowerCase().split('.').pop()
-    const mediaType = isPdf ? 'application/pdf'
-      : ext === 'png' ? 'image/png'
-      : 'image/jpeg'
+    const ext = importRow.file_name?.toLowerCase().split('.').pop() || ''
+    const isSpreadsheet = ['xlsx', 'xls', 'csv'].includes(ext)
+    const isPdf = ext === 'pdf'
 
-    const base64 = await fileToBase64(importRow.file_url)
     const messageContent: any[] = []
-    if (isPdf) {
-      messageContent.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } })
-    } else if (['xlsx', 'xls', 'csv'].includes(ext || '')) {
+
+    if (isSpreadsheet) {
+      // Parse spreadsheet server-side and send as text — Claude cannot read xlsx binary.
+      const spreadsheetText = await spreadsheetToText(importRow.file_url, ext)
+      messageContent.push({ type: 'text', text: `Datos del recetario en formato CSV/texto:\n\n${spreadsheetText}` })
+    } else if (isPdf) {
+      const base64 = await fileToBase64(importRow.file_url)
       messageContent.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } })
     } else {
+      const base64 = await fileToBase64(importRow.file_url)
+      const mediaType = ext === 'png' ? 'image/png' : 'image/jpeg'
       messageContent.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } })
     }
     messageContent.push({ type: 'text', text: prompt })
