@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { formatCurrency, formatPercent, getMarginColor } from '@/lib/utils'
+import { calculateRecipeCost } from '@/lib/recipes'
 import Link from 'next/link'
 
 export default async function AnalisisPage() {
@@ -26,17 +27,8 @@ export default async function AnalisisPage() {
     .eq('restaurant_id', profile?.restaurant_id)
     .eq('status', 'active')
 
-  function calcCost(recipe: any): number {
-    return (recipe.recipe_ingredients || []).reduce((s: number, ri: any) => {
-      if (!ri.ingredients) return s
-      const ratio = (ri.unit === 'gr' && ri.ingredients.unit === 'kg') ||
-                    (ri.unit === 'ml' && ri.ingredients.unit === 'lt') ? 1000 : 1
-      return s + (ri.quantity * ri.ingredients.current_price / ratio)
-    }, 0)
-  }
-
   const analyzed = (recipes || []).map(r => {
-    const cost = calcCost(r)
+    const cost = calculateRecipeCost(r.recipe_ingredients)
     const gross = r.sale_price > 0 ? ((r.sale_price - cost) / r.sale_price) * 100 : 0
     return { ...r, cost, gross }
   }).sort((a, b) => a.gross - b.gross)

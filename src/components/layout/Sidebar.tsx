@@ -7,11 +7,11 @@ import { createClient } from '@/lib/supabase/client'
 
 const nav = [
   { href: '/dashboard', label: 'Dashboard', icon: '▦' },
+  { href: '/menu', label: 'Menu Intelligence', icon: '📋' },
   { href: '/recetas', label: 'Recetas', icon: '🍽' },
   { href: '/ingredientes', label: 'Ingredientes', icon: '🥩' },
   { href: '/facturas', label: 'Facturas OCR', icon: '📄' },
   { href: '/proveedores', label: 'Proveedores', icon: '🚚' },
-  { href: '/menu', label: 'Menu Intelligence', icon: '📋' },
   { href: '/analisis', label: 'Análisis', icon: '📊' },
 ]
 

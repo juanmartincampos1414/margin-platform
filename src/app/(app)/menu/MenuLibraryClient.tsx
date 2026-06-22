@@ -153,7 +153,7 @@ export default function MenuLibraryClient({ menuItems: initial, categories, reci
                               {isCosted ? (
                                 <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">Recipe Connected</span>
                               ) : (
-                                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-yellow-100 text-yellow-700" title="La receta no tiene ingredientes todavía">Sin costo</span>
+                                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-500" title="La receta no tiene ingredientes todavía">Sin costo</span>
                               )}
                               <Link href={`/recetas/${item.recipes.id}`} className="text-slate-500 hover:text-indigo-600 text-xs">{item.recipes.name}</Link>
                               <button onClick={() => setLinkingId(item.id)} className="text-slate-400 hover:text-slate-600 text-xs">Cambiar</button>

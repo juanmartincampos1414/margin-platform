@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, formatPercent, getMarginColor } from '@/lib/utils'
 
 interface Props {
   restaurantName: string
@@ -9,6 +9,10 @@ interface Props {
   ingredientCount: number
   recentInvoices: { id: string; status: string }[]
   recommendations: { id: string; title: string; type: string; estimated_impact_pp: number; priority: string }[]
+  avgMargin: number
+  pctCosted: number
+  invoicesToReview: number
+  pendingRecommendationsCount: number
 }
 
 const priorityColor: Record<string, string> = {
@@ -17,7 +21,7 @@ const priorityColor: Record<string, string> = {
   low: 'bg-slate-100 text-slate-600',
 }
 
-export default function DashboardContent({ restaurantName, recipes, ingredientCount, recentInvoices, recommendations }: Props) {
+export default function DashboardContent({ restaurantName, recipes, ingredientCount, recentInvoices, recommendations, avgMargin, pctCosted, invoicesToReview, pendingRecommendationsCount }: Props) {
   return (
     <div className="p-8">
       {/* Header */}
@@ -28,21 +32,38 @@ export default function DashboardContent({ restaurantName, recipes, ingredientCo
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {[
-          { label: 'Platos activos', value: recipes.length, sub: 'en carta', icon: '🍽', color: 'indigo' },
-          { label: 'Ingredientes', value: ingredientCount, sub: 'registrados', icon: '🥩', color: 'emerald' },
-          { label: 'Facturas', value: recentInvoices.length, sub: 'recientes', icon: '📄', color: 'amber' },
-          { label: 'Recomendaciones', value: recommendations.length, sub: 'pendientes', icon: '🤖', color: 'violet' },
-        ].map(kpi => (
-          <div key={kpi.label} className="bg-white border border-slate-200 rounded-2xl p-5">
-            <div className="flex items-start justify-between mb-3">
-              <span className="text-2xl">{kpi.icon}</span>
-            </div>
-            <p className="text-3xl font-bold text-slate-900">{kpi.value}</p>
-            <p className="text-slate-500 text-sm mt-0.5">{kpi.label}</p>
-            <p className="text-slate-400 text-xs mt-0.5">{kpi.sub}</p>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <div className="flex items-start justify-between mb-3">
+            <span className="text-2xl">📈</span>
           </div>
-        ))}
+          <p className={`text-3xl font-bold ${getMarginColor(avgMargin)}`}>{formatPercent(avgMargin)}</p>
+          <p className="text-slate-500 text-sm mt-0.5">Margen promedio</p>
+          <p className="text-slate-400 text-xs mt-0.5">sobre {formatPercent(pctCosted)} de la carta costeada</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <div className="flex items-start justify-between mb-3">
+            <span className="text-2xl">🥩</span>
+          </div>
+          <p className="text-3xl font-bold text-slate-900">{ingredientCount}</p>
+          <p className="text-slate-500 text-sm mt-0.5">Ingredientes</p>
+          <p className="text-slate-400 text-xs mt-0.5">registrados</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <div className="flex items-start justify-between mb-3">
+            <span className="text-2xl">⚠️</span>
+          </div>
+          <p className="text-3xl font-bold text-slate-900">{invoicesToReview}</p>
+          <p className="text-slate-500 text-sm mt-0.5">Facturas</p>
+          <p className="text-slate-400 text-xs mt-0.5">requieren revisión</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <div className="flex items-start justify-between mb-3">
+            <span className="text-2xl">🤖</span>
+          </div>
+          <p className="text-3xl font-bold text-slate-900">{pendingRecommendationsCount}</p>
+          <p className="text-slate-500 text-sm mt-0.5">Recomendaciones</p>
+          <p className="text-slate-400 text-xs mt-0.5">pendientes</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -85,8 +106,9 @@ export default function DashboardContent({ restaurantName, recipes, ingredientCo
             {[
               { href: '/recetas/nueva', icon: '➕', label: 'Nueva receta' },
               { href: '/facturas/subir', icon: '📤', label: 'Subir factura' },
+              { href: '/menu/importar', icon: '📋', label: 'Importar carta' },
               { href: '/ingredientes', icon: '✏️', label: 'Actualizar precios' },
-              { href: '/analisis', icon: '📊', label: 'Ver análisis' },
+              { href: '/menu', icon: '🍽', label: 'Menu Intelligence' },
             ].map(action => (
               <Link
                 key={action.href}

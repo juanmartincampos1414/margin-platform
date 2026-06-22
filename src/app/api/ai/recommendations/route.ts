@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
-import { requireUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
+import { requireRestaurant } from '@/lib/auth'
 
 export async function POST(req: Request) {
-  const auth = await requireUser()
+  const auth = await requireRestaurant()
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  const { restaurantId } = auth
 
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-  const { recipeName, totalCost, salePrice, grossMargin, ingredients } = await req.json()
+  const { recipeId, recipeName, totalCost, salePrice, grossMargin, ingredients } = await req.json()
 
   const ingredientList = ingredients
     .map((i: any) => `  - ${i.name}: $${i.cost.toFixed(0)} (${i.pct.toFixed(1)}% del costo)`)
@@ -55,6 +57,35 @@ Reglas:
     if (!jsonMatch) throw new Error('No JSON in response')
 
     const data = JSON.parse(jsonMatch[0])
+
+    if (recipeId) {
+      const supabase = await createClient()
+      // Regenerating supersedes the previous batch for this recipe — the
+      // Dashboard otherwise accumulates duplicate/stale recommendations
+      // every time someone re-runs the analysis on the same dish.
+      await supabase
+        .from('ai_recommendations')
+        .update({ status: 'dismissed' })
+        .eq('recipe_id', recipeId)
+        .eq('status', 'pending')
+
+      const recommendations = data.recommendations || []
+      if (recommendations.length > 0) {
+        await supabase.from('ai_recommendations').insert(
+          recommendations.map((r: any) => ({
+            restaurant_id: restaurantId,
+            recipe_id: recipeId,
+            type: r.type,
+            title: r.title,
+            description: r.description,
+            estimated_impact_pp: r.estimated_impact_pp,
+            priority: r.priority,
+            status: 'pending',
+          }))
+        )
+      }
+    }
+
     return NextResponse.json(data)
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
