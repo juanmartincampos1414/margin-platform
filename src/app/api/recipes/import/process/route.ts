@@ -19,6 +19,19 @@ async function fileToBase64(url: string) {
   return Buffer.from(buf).toString('base64')
 }
 
+// Fuzzy match: how similar are two normalized strings?
+// Returns 0-100. Uses token overlap — good enough for recipe/menu names.
+function matchScore(a: string, b: string): number {
+  if (a === b) return 100
+  if (a.includes(b) || b.includes(a)) return 90
+  const tokA = new Set(a.split(/\s+/).filter(t => t.length > 2))
+  const tokB = new Set(b.split(/\s+/).filter(t => t.length > 2))
+  if (tokA.size === 0 || tokB.size === 0) return 0
+  let shared = 0
+  for (const t of tokA) if (tokB.has(t)) shared++
+  return Math.round((shared * 2 / (tokA.size + tokB.size)) * 100)
+}
+
 export async function POST(req: Request) {
   const auth = await requireRestaurant()
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
@@ -42,21 +55,16 @@ export async function POST(req: Request) {
   await adminSupabase.from('recipe_imports').update({ status: 'processing' }).eq('id', importId)
 
   try {
-    const { data: existingIngredients } = await adminSupabase
-      .from('ingredients')
-      .select('id, name, normalized_name, unit, current_price')
-      .eq('restaurant_id', restaurantId)
-      .neq('status', 'archived')
+    // Load context: existing ingredients, recipes, and menu items
+    const [{ data: existingIngredients }, { data: existingRecipes }, { data: menuItems }] = await Promise.all([
+      adminSupabase.from('ingredients').select('id, name, normalized_name, unit, current_price').eq('restaurant_id', restaurantId).neq('status', 'archived'),
+      adminSupabase.from('recipes').select('id, name').eq('restaurant_id', restaurantId).eq('status', 'active'),
+      adminSupabase.from('menu_items').select('id, name, recipe_id').eq('restaurant_id', restaurantId).eq('status', 'active'),
+    ])
 
     const ingredientContext = (existingIngredients || []).length > 0
-      ? `\nIngredientes ya registrados en el sistema:\n${(existingIngredients || []).map((i: any) => `- ${i.name} (${i.unit}): $${i.current_price}`).join('\n')}`
+      ? `\nIngredientes ya registrados:\n${(existingIngredients || []).map((i: any) => `- ${i.name} (${i.unit})`).join('\n')}`
       : ''
-
-    const { data: existingRecipes } = await adminSupabase
-      .from('recipes')
-      .select('id, name')
-      .eq('restaurant_id', restaurantId)
-      .eq('status', 'active')
 
     const recipeContext = (existingRecipes || []).length > 0
       ? `\nRecetas ya existentes:\n${(existingRecipes || []).map((r: any) => `- ${r.name}`).join('\n')}`
@@ -104,11 +112,9 @@ Respondé ÚNICAMENTE con JSON válido:
 
     const base64 = await fileToBase64(importRow.file_url)
     const messageContent: any[] = []
-
     if (isPdf) {
       messageContent.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } })
     } else if (['xlsx', 'xls', 'csv'].includes(ext || '')) {
-      // For spreadsheets, send as document
       messageContent.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } })
     } else {
       messageContent.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } })
@@ -126,7 +132,7 @@ Respondé ÚNICAMENTE con JSON válido:
     if (!jsonMatch) throw new Error('No JSON in OCR response')
 
     let raw = jsonMatch[0]
-    raw = raw.replace(/,(\s*[\]}])/g, '$1')  // trailing commas
+    raw = raw.replace(/,(\s*[\]}])/g, '$1')
 
     let extracted: any
     try {
@@ -139,19 +145,25 @@ Respondé ÚNICAMENTE con JSON válido:
 
     const recipes = extracted.recipes || []
 
-    // Build ingredient lookup by normalized name for matching
+    // Build lookups
     const ingredientByNorm = new Map<string, any>()
     for (const ing of existingIngredients || []) {
       ingredientByNorm.set(ing.normalized_name, ing)
     }
 
-    // Build recipe lookup for duplicate detection
     const recipeByNormName = new Map<string, any>()
     for (const r of existingRecipes || []) {
       recipeByNormName.set(normalizeIngredientName(r.name), r)
     }
 
-    // Create recipe_import_items for each extracted recipe
+    // Menu item lookup — only items without a recipe already (unlinked = opportunity)
+    const unlinkedMenuItems = (menuItems || []).filter((m: any) => !m.recipe_id)
+    const menuItemNorms = unlinkedMenuItems.map((m: any) => ({
+      id: m.id,
+      name: m.name,
+      norm: normalizeIngredientName(m.name),
+    }))
+
     const itemsToInsert = recipes.map((r: any) => {
       const rawIngredients = (r.ingredients || []).map((ing: any) => {
         const norm = normalizeIngredientName(ing.name)
@@ -169,6 +181,15 @@ Respondé ÚNICAMENTE con JSON válido:
       const normName = normalizeIngredientName(r.name)
       const existingRecipe = recipeByNormName.get(normName)
 
+      // Find best menu item match for this recipe name
+      let bestMenuMatch: { id: string; name: string; score: number } | null = null
+      for (const mi of menuItemNorms) {
+        const score = matchScore(normName, mi.norm)
+        if (score >= 70 && (!bestMenuMatch || score > bestMenuMatch.score)) {
+          bestMenuMatch = { id: mi.id, name: mi.name, score }
+        }
+      }
+
       return {
         import_id: importId,
         restaurant_id: restaurantId,
@@ -178,6 +199,8 @@ Respondé ÚNICAMENTE con JSON válido:
         confidence: r.confidence,
         status: 'pending',
         matched_recipe_id: (r.possible_duplicate && existingRecipe) ? existingRecipe.id : null,
+        matched_menu_item_id: bestMenuMatch?.id || null,
+        menu_match_confidence: bestMenuMatch?.score || null,
         raw_ingredients: rawIngredients,
       }
     })
@@ -186,10 +209,8 @@ Respondé ÚNICAMENTE con JSON válido:
       await adminSupabase.from('recipe_import_items').insert(itemsToInsert)
     }
 
-    const finalStatus = extracted.confidence >= 60 ? 'review_required' : 'review_required'
-
     await adminSupabase.from('recipe_imports').update({
-      status: finalStatus,
+      status: 'review_required',
       ocr_confidence: extracted.confidence,
       extracted_data: extracted,
       processed_at: new Date().toISOString(),

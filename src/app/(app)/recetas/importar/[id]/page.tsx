@@ -15,10 +15,11 @@ export default async function RecipeImportDetailPage({ params }: { params: Promi
     .eq('id', user.id)
     .single()
 
-  const [{ data: importRow }, { data: items }, { data: ingredients }] = await Promise.all([
+  const [{ data: importRow }, { data: items }, { data: ingredients }, { data: menuItems }] = await Promise.all([
     supabase.from('recipe_imports').select('*').eq('id', id).eq('restaurant_id', profile?.restaurant_id).single(),
     supabase.from('recipe_import_items').select('*').eq('import_id', id).eq('restaurant_id', profile?.restaurant_id).order('created_at'),
     supabase.from('ingredients').select('id, name, unit, current_price').eq('restaurant_id', profile?.restaurant_id).neq('status', 'archived').order('name'),
+    supabase.from('menu_items').select('id, name, recipe_id').eq('restaurant_id', profile?.restaurant_id).eq('status', 'active').order('name'),
   ])
 
   if (!importRow) notFound()
@@ -38,6 +39,7 @@ export default async function RecipeImportDetailPage({ params }: { params: Promi
         importRow={importRow}
         items={items || []}
         ingredients={ingredients || []}
+        menuItems={menuItems || []}
       />
     </div>
   )

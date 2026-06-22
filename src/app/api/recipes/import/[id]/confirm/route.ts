@@ -11,7 +11,9 @@ function getAdminClient() {
   )
 }
 
-// POST: materialize all 'confirmed' recipe_import_items into real recipes + recipe_ingredients.
+// POST: materialize confirmed recipe_import_items into real recipes + recipe_ingredients.
+// Key onboarding step: if matched_menu_item_id is set, links the new recipe to that
+// menu_item so it immediately contributes to % carta costeada.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireRestaurant()
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
@@ -41,7 +43,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: 'No confirmed items to materialize' }, { status: 400 })
   }
 
-  // Ingredient lookup
+  // Fresh ingredient lookup (includes any created in this session)
   const { data: existingIngredients } = await adminSupabase
     .from('ingredients')
     .select('id, normalized_name')
@@ -52,12 +54,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ingredientByNorm.set(ing.normalized_name, ing.id)
   }
 
-  const createdRecipes: { id: string; name: string }[] = []
+  const createdRecipes: { id: string; name: string; linked_menu_item_id: string | null }[] = []
 
   for (const item of items) {
     const rawIngredients: any[] = item.raw_ingredients || []
 
-    // Create the recipe
     const { data: newRecipe } = await adminSupabase
       .from('recipes')
       .insert({
@@ -116,27 +117,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       await adminSupabase.from('recipe_ingredients').insert(recipeIngredientRows)
     }
 
-    // Link menu item if this was a duplicate match that the user confirmed
-    if (item.matched_recipe_id) {
-      // User confirmed against an existing recipe — link it to any menu_item
-      // that references the matched recipe but no new recipe was created for the menu item
-      // (no auto-link here — just update the import_item's created_recipe_id)
+    // Core onboarding action: link the recipe to the matched menu item.
+    // This is what raises % carta costeada in the dashboard.
+    if (item.matched_menu_item_id) {
+      await adminSupabase
+        .from('menu_items')
+        .update({ recipe_id: newRecipe.id })
+        .eq('id', item.matched_menu_item_id)
+        .eq('restaurant_id', restaurantId)
+        .is('recipe_id', null)  // only link if still unlinked — never overwrite an existing link
     }
 
-    // Update the item with the created recipe id
     await adminSupabase
       .from('recipe_import_items')
-      .update({ created_recipe_id: newRecipe.id, status: 'confirmed' })
+      .update({ created_recipe_id: newRecipe.id })
       .eq('id', item.id)
 
-    createdRecipes.push({ id: newRecipe.id, name: item.proposed_name })
+    createdRecipes.push({ id: newRecipe.id, name: item.proposed_name, linked_menu_item_id: item.matched_menu_item_id || null })
   }
 
-  // Mark import as confirmed
+  const linkedCount = createdRecipes.filter(r => r.linked_menu_item_id).length
+
   await adminSupabase.from('recipe_imports').update({
     status: 'confirmed',
     imported_recipe_count: createdRecipes.length,
   }).eq('id', importId)
 
-  return NextResponse.json({ created: createdRecipes.length, recipes: createdRecipes })
+  return NextResponse.json({
+    created: createdRecipes.length,
+    linked_to_menu: linkedCount,
+    recipes: createdRecipes,
+  })
 }

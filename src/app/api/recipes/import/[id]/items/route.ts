@@ -21,7 +21,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const supabase = await createClient()
   const adminSupabase = getAdminClient()
 
-  const { itemId, status, proposed_name, proposed_sale_price, proposed_portions, raw_ingredients, corrections } = await req.json()
+  const { itemId, status, proposed_name, proposed_sale_price, proposed_portions, raw_ingredients, matched_menu_item_id, corrections } = await req.json()
   if (!itemId) return NextResponse.json({ error: 'Missing itemId' }, { status: 400 })
 
   // Verify ownership
@@ -42,6 +42,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (proposed_sale_price !== undefined) updates.proposed_sale_price = proposed_sale_price
   if (proposed_portions !== undefined) updates.proposed_portions = proposed_portions
   if (raw_ingredients !== undefined) updates.raw_ingredients = raw_ingredients
+  if (matched_menu_item_id !== undefined) updates.matched_menu_item_id = matched_menu_item_id
 
   const { data, error } = await supabase
     .from('recipe_import_items')
