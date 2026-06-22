@@ -43,7 +43,8 @@ export async function middleware(request: NextRequest) {
   // Protected app routes
   if (path.startsWith('/dashboard') || path.startsWith('/recetas') ||
       path.startsWith('/ingredientes') || path.startsWith('/facturas') ||
-      path.startsWith('/menu') || path.startsWith('/analisis')) {
+      path.startsWith('/menu') || path.startsWith('/analisis') ||
+      path.startsWith('/proveedores')) {
     if (!user) {
       return NextResponse.redirect(new URL('/login', request.url))
     }

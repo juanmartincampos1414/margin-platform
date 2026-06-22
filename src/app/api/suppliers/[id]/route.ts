@@ -1,50 +1,49 @@
+import { requireRestaurant } from '@/lib/auth'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireRestaurant()
+  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  const { restaurantId } = auth
   const { id } = await params
+
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { data: profile } = await supabase.from('profiles').select('restaurant_id').eq('id', user.id).single()
-  if (!profile?.restaurant_id) return NextResponse.json({ error: 'No restaurant' }, { status: 400 })
+  const [{ data: supplier }, { data: invoices }, { data: phRows }] = await Promise.all([
+    supabase
+      .from('suppliers')
+      .select('*, supplier_metrics(health_score, risk_level, monthly_variation_pct, updated_at)')
+      .eq('id', id)
+      .eq('restaurant_id', restaurantId)
+      .single(),
+    supabase
+      .from('invoices')
+      .select('id, invoice_number, invoice_date, total_amount, status')
+      .eq('restaurant_id', restaurantId)
+      .eq('supplier_id', id)
+      .order('invoice_date', { ascending: false }),
+    supabase
+      .from('price_history')
+      .select('ingredient_id, ingredients(id, name, current_price, unit)')
+      .eq('restaurant_id', restaurantId)
+      .eq('supplier_id', id),
+  ])
 
-  const { data: supplier, error } = await supabase
-    .from('suppliers')
-    .select('*, invoices(id, file_name, invoice_number, invoice_date, total_amount, status), ingredients(id, name, current_price, unit, status)')
-    .eq('id', id)
-    .eq('restaurant_id', profile.restaurant_id)
-    .single()
+  if (!supplier) return NextResponse.json({ error: 'Supplier not found' }, { status: 404 })
 
-  if (error || !supplier) return NextResponse.json({ error: 'Supplier not found' }, { status: 404 })
-
-  const { data: priceHistory } = await supabase
-    .from('price_history')
-    .select('ingredient_id, price, recorded_at')
-    .eq('supplier_id', id)
-    .order('recorded_at', { ascending: true })
-
-  const byIngredient: Record<string, { price: number }[]> = {}
-  for (const row of priceHistory || []) {
-    byIngredient[row.ingredient_id] ??= []
-    byIngredient[row.ingredient_id].push({ price: Number(row.price) })
-  }
-
-  const pctChanges: number[] = []
-  for (const points of Object.values(byIngredient)) {
-    for (let i = 1; i < points.length; i++) {
-      const prev = points[i - 1].price
-      if (prev > 0) pctChanges.push(((points[i].price - prev) / prev) * 100)
+  const distinctIngredients = new Map<string, any>()
+  for (const row of phRows || []) {
+    if (!distinctIngredients.has(row.ingredient_id)) {
+      distinctIngredients.set(row.ingredient_id, row.ingredients)
     }
   }
-  const avgPriceVariation = pctChanges.length
-    ? pctChanges.reduce((a, b) => a + b, 0) / pctChanges.length
-    : 0
 
-  const invoices = supplier.invoices || []
-  const totalSpend = invoices.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0)
-  const lastPurchase = invoices.map((inv: any) => inv.invoice_date).filter(Boolean).sort().reverse()[0] || null
+  const totalSpend = (invoices || []).reduce((s, inv) => s + (Number(inv.total_amount) || 0), 0)
+  const lastInvoice = invoices?.[0]?.invoice_date || null
+  const metricsRow = Array.isArray(supplier.supplier_metrics)
+    ? supplier.supplier_metrics[0]
+    : supplier.supplier_metrics
 
   return NextResponse.json({
     id: supplier.id,
@@ -56,13 +55,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     credit_days: supplier.credit_days,
     status: supplier.status,
     total_spend: totalSpend,
-    invoice_count: invoices.length,
-    ingredient_count: (supplier.ingredients || []).length,
-    last_purchase: lastPurchase,
-    avg_price_variation: avgPriceVariation,
-    invoices,
-    ingredients: supplier.ingredients,
-    price_history: priceHistory,
+    invoice_count: (invoices || []).length,
+    ingredient_count: distinctIngredients.size,
+    last_invoice: lastInvoice,
+    invoices: invoices || [],
+    ingredients: Array.from(distinctIngredients.values()),
+    health_score: metricsRow?.health_score ?? null,
+    risk_level: metricsRow?.risk_level ?? null,
+    monthly_variation_pct: metricsRow?.monthly_variation_pct ?? null,
+    metrics_updated_at: metricsRow?.updated_at ?? null,
   })
 }
 

@@ -1,8 +1,34 @@
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { formatCurrency, formatPercent } from '@/lib/utils'
-import PriceEvolutionChart from './PriceEvolutionChart'
+import { formatCurrency } from '@/lib/utils'
+
+function ScoreBadge({ score }: { score: number | null }) {
+  if (score === null) return <span className="text-slate-400">Sin datos aún</span>
+  const color = score >= 70 ? 'text-emerald-600' : score >= 40 ? 'text-yellow-600' : 'text-red-600'
+  const bg = score >= 70 ? 'bg-emerald-50 border-emerald-200' : score >= 40 ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200'
+  return (
+    <div className={`inline-flex items-center gap-2 border rounded-xl px-3 py-1.5 ${bg}`}>
+      <span className={`text-2xl font-bold ${color}`}>{Math.round(score)}</span>
+      <span className="text-slate-400 text-sm">/ 100</span>
+    </div>
+  )
+}
+
+function RiskChip({ level }: { level: string | null }) {
+  if (!level) return null
+  const styles: Record<string, string> = {
+    low: 'bg-emerald-100 text-emerald-700',
+    medium: 'bg-yellow-100 text-yellow-700',
+    high: 'bg-red-100 text-red-700',
+  }
+  const labels: Record<string, string> = { low: 'Low Risk', medium: 'Medium Risk', high: 'High Risk' }
+  return (
+    <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${styles[level] || 'bg-slate-100 text-slate-500'}`}>
+      {labels[level] || level}
+    </span>
+  )
+}
 
 export default async function ProveedorDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -16,47 +42,61 @@ export default async function ProveedorDetailPage({ params }: { params: Promise<
     .eq('id', user.id)
     .single()
 
-  const { data: supplier } = await supabase
-    .from('suppliers')
-    .select('*, invoices(id, file_name, invoice_number, invoice_date, total_amount, status), ingredients(id, name, current_price, unit, status)')
-    .eq('id', id)
-    .eq('restaurant_id', profile?.restaurant_id)
-    .single()
+  const restaurantId = profile?.restaurant_id
+
+  const [{ data: supplier }, { data: invoices }, { data: phRows }, { data: opportunities }] = await Promise.all([
+    supabase
+      .from('suppliers')
+      .select('*, supplier_metrics(health_score, risk_level, monthly_variation_pct, updated_at)')
+      .eq('id', id)
+      .eq('restaurant_id', restaurantId)
+      .single(),
+    supabase
+      .from('invoices')
+      .select('id, invoice_number, invoice_date, total_amount, status')
+      .eq('restaurant_id', restaurantId)
+      .eq('supplier_id', id)
+      .order('invoice_date', { ascending: false }),
+    supabase
+      .from('price_history')
+      .select('ingredient_id, price, recorded_at, invoices(invoice_date), ingredients(id, name, current_price, unit)')
+      .eq('restaurant_id', restaurantId)
+      .eq('supplier_id', id)
+      .order('recorded_at', { ascending: true }),
+    supabase
+      .from('supplier_opportunities')
+      .select('*, ingredients(name, unit)')
+      .eq('restaurant_id', restaurantId)
+      .eq('supplier_id', id)
+      .eq('status', 'open')
+      .order('impact_value', { ascending: false }),
+  ])
 
   if (!supplier) notFound()
 
-  const { data: priceHistory } = await supabase
-    .from('price_history')
-    .select('price, recorded_at')
-    .eq('supplier_id', id)
-    .order('recorded_at', { ascending: true })
+  const metricsRaw = Array.isArray(supplier.supplier_metrics) ? supplier.supplier_metrics[0] : supplier.supplier_metrics
+  const totalSpend = (invoices || []).reduce((s, inv) => s + (Number(inv.total_amount) || 0), 0)
+  const lastInvoice = invoices?.[0]?.invoice_date || null
 
-  const invoices = supplier.invoices || []
-  const totalSpend = invoices.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0)
-  const lastPurchase = invoices.map((inv: any) => inv.invoice_date).filter(Boolean).sort().reverse()[0] || null
-
-  const byDate: Record<string, number[]> = {}
-  for (const row of priceHistory || []) {
-    const day = new Date(row.recorded_at).toLocaleDateString('es-AR')
-    byDate[day] ??= []
-    byDate[day].push(Number(row.price))
+  const distinctIngredients = new Map<string, any>()
+  for (const row of phRows || []) {
+    if (!distinctIngredients.has(row.ingredient_id)) distinctIngredients.set(row.ingredient_id, row.ingredients)
   }
-  const chartData = Object.entries(byDate).map(([date, prices]) => ({
-    date,
-    price: prices.reduce((a, b) => a + b, 0) / prices.length,
-  }))
 
-  const pctChanges: number[] = []
-  const flat = (priceHistory || []).map(r => Number(r.price))
-  for (let i = 1; i < flat.length; i++) {
-    if (flat[i - 1] > 0) pctChanges.push(((flat[i] - flat[i - 1]) / flat[i - 1]) * 100)
+  // Price history per ingredient for the evolution view
+  const historyByIngredient = new Map<string, { date: string; price: number }[]>()
+  for (const row of phRows || []) {
+    const date = (row.invoices as any)?.invoice_date || row.recorded_at?.slice(0, 10)
+    if (!historyByIngredient.has(row.ingredient_id)) historyByIngredient.set(row.ingredient_id, [])
+    historyByIngredient.get(row.ingredient_id)!.push({ date, price: Number(row.price) })
   }
-  const avgVariation = pctChanges.length ? pctChanges.reduce((a, b) => a + b, 0) / pctChanges.length : 0
+
+  const variationPct = metricsRaw?.monthly_variation_pct ?? null
 
   return (
-    <div className="p-8 max-w-4xl">
+    <div className="p-8 max-w-5xl">
       <div className="flex items-center gap-2 text-slate-400 text-sm mb-6">
-        <Link href="/proveedores" className="hover:text-slate-600">Proveedores</Link>
+        <Link href="/proveedores" className="hover:text-slate-600">Supplier Intelligence</Link>
         <span>›</span>
         <span className="text-slate-600">{supplier.name}</span>
       </div>
@@ -64,57 +104,126 @@ export default async function ProveedorDetailPage({ params }: { params: Promise<
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{supplier.name}</h1>
-          {supplier.tax_id && <p className="text-slate-500 text-sm mt-1">{supplier.tax_id}</p>}
+          {supplier.tax_id && <p className="text-slate-500 text-sm mt-1">CUIT {supplier.tax_id}</p>}
         </div>
-        <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${supplier.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-          {supplier.status === 'active' ? 'Activo' : supplier.status === 'inactive' ? 'Inactivo' : 'Archivado'}
-        </span>
+        <RiskChip level={metricsRaw?.risk_level ?? null} />
       </div>
 
-      {/* Dashboard cards */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {[
-          { label: 'Gasto total', value: formatCurrency(totalSpend) },
-          { label: 'Facturas', value: invoices.length },
-          { label: 'Ingredientes', value: (supplier.ingredients || []).length },
-          { label: 'Última compra', value: lastPurchase ? new Date(lastPurchase).toLocaleDateString('es-AR') : '—' },
-          { label: 'Variación de precio promedio', value: formatPercent(avgVariation), accent: avgVariation > 0 ? 'text-red-500' : avgVariation < 0 ? 'text-emerald-500' : 'text-slate-700' },
-          { label: 'Condición de pago', value: supplier.payment_terms || '—' },
-        ].map(c => (
-          <div key={c.label} className="bg-white border border-slate-200 rounded-2xl p-4">
-            <p className="text-slate-400 text-xs mb-1">{c.label}</p>
-            <p className={`text-lg font-bold ${(c as any).accent || 'text-slate-900'}`}>{c.value}</p>
+      {/* KPIs — FR-035 Supplier Profile */}
+      <div className="grid grid-cols-5 gap-4 mb-8">
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 col-span-2">
+          <p className="text-slate-400 text-xs mb-2">Supplier Health Score</p>
+          <ScoreBadge score={metricsRaw?.health_score ?? null} />
+          {metricsRaw?.updated_at && (
+            <p className="text-slate-300 text-xs mt-2">Actualizado {new Date(metricsRaw.updated_at).toLocaleDateString('es-AR')}</p>
+          )}
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <p className="text-slate-400 text-xs mb-1">Productos</p>
+          <p className="text-2xl font-bold text-slate-900">{distinctIngredients.size}</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <p className="text-slate-400 text-xs mb-1">Facturas</p>
+          <p className="text-2xl font-bold text-slate-900">{(invoices || []).length}</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <p className="text-slate-400 text-xs mb-1">Variación mensual</p>
+          {variationPct !== null ? (
+            <p className={`text-2xl font-bold ${variationPct > 2 ? 'text-red-600' : variationPct < -2 ? 'text-emerald-600' : 'text-slate-700'}`}>
+              {variationPct > 0 ? '+' : ''}{variationPct.toFixed(1)}%
+            </p>
+          ) : (
+            <p className="text-slate-300 text-lg">—</p>
+          )}
+          <p className="text-slate-400 text-xs mt-0.5">vs mes anterior</p>
+        </div>
+      </div>
+
+      {/* Opportunities — FR-040 */}
+      {(opportunities || []).length > 0 && (
+        <div className="mb-6">
+          <h2 className="font-semibold text-slate-900 mb-3">🎯 Oportunidades detectadas</h2>
+          <div className="grid grid-cols-2 gap-4">
+            {(opportunities || []).slice(0, 4).map((opp: any) => (
+              <div key={opp.id} className="bg-red-50 border border-red-200 rounded-2xl p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="font-semibold text-slate-900 text-sm">{opp.ingredients?.name || 'Ingrediente'}</p>
+                  <span className="text-red-600 font-bold text-sm">+{Number(opp.price_change_pct).toFixed(1)}%</span>
+                </div>
+                <p className="text-red-700 font-bold text-lg">{formatCurrency(Math.abs(Number(opp.impact_value)))}/mes</p>
+                <p className="text-slate-500 text-xs mt-1">Impacto económico estimado</p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
 
-      {/* Price evolution */}
+      {/* Price Evolution per ingredient — FR-037 / Screen 30 */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 mb-6">
-        <h2 className="font-semibold text-slate-900 mb-4">Evolución de precios</h2>
-        <PriceEvolutionChart data={chartData} />
+        <h2 className="font-semibold text-slate-900 mb-4">📈 Evolución de precios por producto</h2>
+        {historyByIngredient.size === 0 ? (
+          <p className="text-slate-400 text-sm">Sin historial de precios todavía.</p>
+        ) : (
+          <div className="space-y-4">
+            {Array.from(historyByIngredient.entries()).map(([ingId, points]) => {
+              const ingredient = distinctIngredients.get(ingId)
+              if (!ingredient) return null
+              const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date))
+              const first = sorted[0]?.price
+              const last = sorted[sorted.length - 1]?.price
+              const totalPct = first > 0 ? ((last - first) / first) * 100 : 0
+              return (
+                <div key={ingId} className="border border-slate-100 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="font-medium text-slate-800">{ingredient.name}</p>
+                    <div className="flex items-center gap-3">
+                      <span className="text-slate-500 text-sm">{formatCurrency(last)}/{ingredient.unit}</span>
+                      {sorted.length >= 2 && (
+                        <span className={`text-xs font-semibold ${totalPct > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                          {totalPct > 0 ? '+' : ''}{totalPct.toFixed(1)}% total
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    {sorted.map((point, i) => (
+                      <div key={i} className="text-center">
+                        <p className="text-xs text-slate-400">{point.date ? new Date(point.date).toLocaleDateString('es-AR', { month: 'short', day: 'numeric' }) : '—'}</p>
+                        <p className="text-xs font-semibold text-slate-700">{formatCurrency(point.price)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {/* Ingredient catalog */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 mb-6">
-        <h2 className="font-semibold text-slate-900 mb-4">Catálogo de ingredientes</h2>
-        {(supplier.ingredients || []).length === 0 ? (
-          <p className="text-slate-400 text-sm">Sin ingredientes asociados todavía.</p>
+        <h2 className="font-semibold text-slate-900 mb-4">Catálogo de productos</h2>
+        {distinctIngredients.size === 0 ? (
+          <p className="text-slate-400 text-sm">Sin productos asociados todavía.</p>
         ) : (
-          <div className="space-y-2">
-            {supplier.ingredients.map((ing: any) => (
+          <div className="grid grid-cols-2 gap-2">
+            {Array.from(distinctIngredients.values()).map((ing: any) => ing && (
               <div key={ing.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
                 <p className="font-medium text-slate-800 text-sm">{ing.name}</p>
-                <p className="font-semibold text-slate-800 text-sm">{formatCurrency(ing.current_price)}/{ing.unit}</p>
+                <p className="font-semibold text-slate-700 text-sm">{formatCurrency(ing.current_price)}/{ing.unit}</p>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* Purchase history */}
+      {/* Invoice history */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6">
-        <h2 className="font-semibold text-slate-900 mb-4">Historial de compras</h2>
-        {invoices.length === 0 ? (
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-slate-900">Historial de compras</h2>
+          <span className="text-slate-500 text-sm">Total: {formatCurrency(totalSpend)}</span>
+        </div>
+        {(invoices || []).length === 0 ? (
           <p className="text-slate-400 text-sm">Sin facturas todavía.</p>
         ) : (
           <table className="w-full text-sm">
@@ -127,16 +236,16 @@ export default async function ProveedorDetailPage({ params }: { params: Promise<
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {invoices.map((inv: any) => (
+              {(invoices || []).map((inv: any) => (
                 <tr key={inv.id}>
                   <td className="py-2.5">
                     <Link href={`/facturas/${inv.id}`} className="text-indigo-600 hover:underline">
-                      {inv.invoice_number || inv.file_name || 'Factura'}
+                      {inv.invoice_number || 'Factura'}
                     </Link>
                   </td>
                   <td className="py-2.5 text-slate-600">{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('es-AR') : '—'}</td>
                   <td className="py-2.5 text-right font-medium text-slate-800">{formatCurrency(Number(inv.total_amount) || 0)}</td>
-                  <td className="py-2.5 text-center text-slate-500">{inv.status}</td>
+                  <td className="py-2.5 text-center text-slate-500 text-xs">{inv.status}</td>
                 </tr>
               ))}
             </tbody>

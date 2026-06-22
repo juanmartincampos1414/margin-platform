@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
 import { requireRestaurant } from '@/lib/auth'
 import { normalizeIngredientName } from '@/lib/utils'
+import { recomputeSupplierIntelligence } from '@/lib/suppliers'
 
 const CONFIDENCE_THRESHOLD = 70
 
@@ -292,6 +293,12 @@ Respondé ÚNICAMENTE con JSON válido:
       }
     }
 
+    // Recompute supplier metrics synchronously — same place current_price
+    // already updates inline, no separate job needed for an MVP score.
+    if (supplierId) {
+      await recomputeSupplierIntelligence(adminSupabase, restaurantId, supplierId)
+    }
+
     const finalStatus = extracted.confidence >= CONFIDENCE_THRESHOLD ? 'processed' : 'review_required'
 
     const { data: updatedInvoice } = await adminSupabase
@@ -313,6 +320,16 @@ Respondé ÚNICAMENTE con JSON válido:
       .eq('id', invoiceId)
       .select()
       .single()
+
+    // Recompute supplier intelligence synchronously — same place
+    // current_price already updates, no separate job needed.
+    if (supplierId) {
+      try {
+        await recomputeSupplierIntelligence(adminSupabase, restaurantId, supplierId)
+      } catch {
+        // Never let a metrics failure block the invoice response.
+      }
+    }
 
     return NextResponse.json({ invoice: updatedInvoice, ...extracted })
   } catch (e: any) {
