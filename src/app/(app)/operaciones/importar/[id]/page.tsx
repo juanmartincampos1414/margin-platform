@@ -19,7 +19,7 @@ export default async function OperationsImportDetailPage({ params }: { params: P
     supabase.from('operations_imports').select('*').eq('id', id).eq('restaurant_id', profile?.restaurant_id).single(),
     supabase
       .from('daily_operations')
-      .select('*, daily_product_mix(*, menu_items(id, name))')
+      .select('*, daily_product_mix(id, item_name, quantity_sold, total_revenue)')
       .eq('import_id', id)
       .eq('restaurant_id', profile?.restaurant_id)
       .order('operation_date'),

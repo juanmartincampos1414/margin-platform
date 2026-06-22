@@ -18,6 +18,47 @@ async function fileToBase64(url: string) {
   return Buffer.from(buf).toString('base64')
 }
 
+// Executive KPI contract — intentionally compact to avoid JSON truncation.
+// Full product_mix replaced by top_sellers (max 10) — enough for Executive Intelligence
+// without generating multi-thousand-token arrays.
+const PROMPT = `Analizá este documento de cierre de caja o reporte de ventas.
+Extraé un resumen ejecutivo de KPIs operativos. Si el documento cubre múltiples días, extraé cada uno por separado.
+
+Respondé ÚNICAMENTE con este JSON válido (todos los valores numéricos sin formato, sin puntos ni comas de miles):
+{
+  "confidence": número 0-100,
+  "period_start": "YYYY-MM-DD",
+  "period_end": "YYYY-MM-DD",
+  "days": [
+    {
+      "date": "YYYY-MM-DD",
+      "total_revenue": número o null,
+      "transactions": número entero o null,
+      "total_covers": número entero o null,
+      "avg_ticket": número o null,
+      "avg_cover": número o null,
+      "salon_sales": número o null,
+      "delivery_sales": número o null,
+      "cash_amount": número o null,
+      "card_amount": número o null,
+      "transfer_amount": número o null,
+      "other_payment_amount": número o null,
+      "complimentary_amount": número o null,
+      "credit_notes_amount": número o null,
+      "cancellations_amount": número o null,
+      "top_sellers": [
+        { "name": "nombre del producto", "quantity": número entero o null, "revenue": número o null }
+      ]
+    }
+  ]
+}
+
+Reglas:
+- top_sellers: máximo 10 productos, ordenados por revenue descendente
+- Todos los montos en la moneda del documento, sin formato (1234.56 no 1.234,56)
+- Si un campo no aparece en el documento, poné null
+- No agregues campos extra fuera de este schema`
+
 export async function POST(req: Request) {
   const auth = await requireRestaurant()
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
@@ -41,54 +82,6 @@ export async function POST(req: Request) {
   await adminSupabase.from('operations_imports').update({ status: 'processing' }).eq('id', importId)
 
   try {
-    // Load menu items for product mix matching
-    const { data: menuItems } = await adminSupabase
-      .from('menu_items')
-      .select('id, name')
-      .eq('restaurant_id', restaurantId)
-      .eq('status', 'active')
-
-    const menuContext = (menuItems || []).length > 0
-      ? `\nProductos del menú activo:\n${(menuItems || []).map((m: any) => `- ${m.name}`).join('\n')}`
-      : ''
-
-    const prompt = `Analizá este documento (cierre de caja, reporte POS, planilla de ventas o captura de pantalla de sistema).
-Extraé datos operativos: ventas, cubiertos, ticket promedio, medios de pago, y mix de productos si está disponible.
-${menuContext}
-
-Para el mix de productos, intentá hacer match con los nombres del menú.
-Si hay datos para múltiples días, extraé cada día por separado.
-
-Respondé ÚNICAMENTE con JSON válido:
-{
-  "confidence": 0-100,
-  "period_start": "YYYY-MM-DD o null",
-  "period_end": "YYYY-MM-DD o null",
-  "days": [
-    {
-      "date": "YYYY-MM-DD",
-      "total_revenue": número o null,
-      "total_covers": número entero o null,
-      "avg_ticket": número o null,
-      "cash_amount": número o null,
-      "card_amount": número o null,
-      "transfer_amount": número o null,
-      "other_payment_amount": número o null,
-      "lunch_covers": número entero o null,
-      "dinner_covers": número entero o null,
-      "product_mix": [
-        {
-          "item_name": "nombre del producto",
-          "matched_menu_item": "nombre exacto del menú si matchea, null si no",
-          "quantity_sold": número entero o null,
-          "unit_revenue": número o null,
-          "total_revenue": número o null
-        }
-      ]
-    }
-  ]
-}`
-
     const isPdf = importRow.file_name?.toLowerCase().endsWith('.pdf')
     const ext = importRow.file_name?.toLowerCase().split('.').pop()
     const mediaType = isPdf ? 'application/pdf'
@@ -102,11 +95,11 @@ Respondé ÚNICAMENTE con JSON válido:
     } else {
       messageContent.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } })
     }
-    messageContent.push({ type: 'text', text: prompt })
+    messageContent.push({ type: 'text', text: PROMPT })
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 8192,
+      max_tokens: 4096,
       messages: [{ role: 'user', content: messageContent }],
     })
 
@@ -114,32 +107,28 @@ Respondé ÚNICAMENTE con JSON válido:
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) throw new Error('No JSON in OCR response')
 
-    // Repair common JSON issues from OCR responses:
-    // 1. Trailing commas before ] or }
-    // 2. Spanish number formats (1.234,56 → 1234.56) inside string values that leaked as bare numbers
-    // 3. Truncation: close any open arrays/objects so JSON.parse has a chance
     let raw = jsonMatch[0]
-    raw = raw.replace(/,(\s*[\]}])/g, '$1')  // trailing commas
+    raw = raw.replace(/,(\s*[\]}])/g, '$1')  // strip trailing commas
 
     let extracted: any
     try {
       extracted = JSON.parse(raw)
     } catch (parseErr: any) {
-      // Log the raw text for debugging, then rethrow with context
       console.error('[operations/process] JSON parse failed. stop_reason:', message.stop_reason, '| raw length:', raw.length)
-      console.error('[operations/process] raw tail:', raw.slice(-300))
+      console.error('[operations/process] raw tail:', raw.slice(-400))
       throw new Error(`JSON parse error: ${parseErr.message} (stop_reason: ${message.stop_reason})`)
     }
 
-    // Build menu item lookup for matching
-    const menuItemByName = new Map<string, string>()
-    for (const m of menuItems || []) {
-      menuItemByName.set(m.name.toLowerCase().trim(), m.id)
-    }
-
-    // Create draft daily_operations rows
     const days = extracted.days || []
+
     for (const day of days) {
+      // Compute avg_cover server-side if not in response but we have the data
+      const avgCover = day.avg_cover ?? (
+        day.total_revenue && day.total_covers && day.total_covers > 0
+          ? Math.round((day.total_revenue / day.total_covers) * 100) / 100
+          : null
+      )
+
       const { data: opRow } = await adminSupabase
         .from('daily_operations')
         .insert({
@@ -147,14 +136,19 @@ Respondé ÚNICAMENTE con JSON válido:
           import_id: importId,
           operation_date: day.date,
           total_revenue: day.total_revenue,
+          transactions: day.transactions,
           total_covers: day.total_covers,
           avg_ticket: day.avg_ticket,
+          avg_cover: avgCover,
+          salon_sales: day.salon_sales,
+          delivery_sales: day.delivery_sales,
           cash_amount: day.cash_amount,
           card_amount: day.card_amount,
           transfer_amount: day.transfer_amount,
           other_payment_amount: day.other_payment_amount,
-          lunch_covers: day.lunch_covers,
-          dinner_covers: day.dinner_covers,
+          complimentary_amount: day.complimentary_amount,
+          credit_notes_amount: day.credit_notes_amount,
+          cancellations_amount: day.cancellations_amount,
           status: 'draft',
         })
         .select('id')
@@ -162,23 +156,18 @@ Respondé ÚNICAMENTE con JSON válido:
 
       if (!opRow) continue
 
-      // Create product mix rows
-      const productMix: any[] = day.product_mix || []
-      if (productMix.length > 0) {
-        const mixRows = productMix.map((p: any) => {
-          const matchedId = p.matched_menu_item
-            ? menuItemByName.get(p.matched_menu_item.toLowerCase().trim()) || null
-            : null
-          return {
-            restaurant_id: restaurantId,
-            operation_id: opRow.id,
-            menu_item_id: matchedId,
-            item_name: p.item_name,
-            quantity_sold: p.quantity_sold,
-            unit_revenue: p.unit_revenue,
-            total_revenue: p.total_revenue,
-          }
-        })
+      // Store top_sellers in daily_product_mix (same table, simpler data)
+      const topSellers: any[] = day.top_sellers || []
+      if (topSellers.length > 0) {
+        const mixRows = topSellers.slice(0, 10).map((p: any) => ({
+          restaurant_id: restaurantId,
+          operation_id: opRow.id,
+          menu_item_id: null,  // matching deferred — not needed for Executive Intelligence
+          item_name: p.name,
+          quantity_sold: p.quantity,
+          unit_revenue: null,
+          total_revenue: p.revenue,
+        }))
         await adminSupabase.from('daily_product_mix').insert(mixRows)
       }
     }
