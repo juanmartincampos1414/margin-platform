@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -34,12 +35,9 @@ export default function Sidebar({ restaurantName, userInitial }: Props) {
   return (
     <aside className="w-60 bg-slate-950 border-r border-slate-800 flex flex-col h-screen sticky top-0">
       {/* Logo */}
-      <div className="flex items-center gap-2.5 px-5 py-5 border-b border-slate-800">
-        <div className="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center font-bold text-sm text-white shrink-0">M</div>
-        <div className="min-w-0">
-          <p className="text-white font-semibold text-sm truncate">{restaurantName}</p>
-          <p className="text-slate-500 text-xs">Margin Platform</p>
-        </div>
+      <div className="px-5 py-4 border-b border-slate-800">
+        <Image src="/logo.png" alt="Margin" width={140} height={70} className="object-contain" priority />
+        <p className="text-slate-500 text-xs mt-1 truncate">{restaurantName}</p>
       </div>
 
       {/* Nav */}
