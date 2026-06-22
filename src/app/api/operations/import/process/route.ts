@@ -24,6 +24,14 @@ async function fileToBase64(url: string) {
 const PROMPT = `Analizá este documento de cierre de caja o reporte de ventas.
 Extraé un resumen ejecutivo de KPIs operativos. Si el documento cubre múltiples días, extraé cada uno por separado.
 
+Definiciones exactas — usá estas fórmulas, no otras:
+- transactions: cantidad de tickets/comandas/órdenes del período (número entero)
+- total_covers: cantidad de cubiertos/comensales del período (número entero)
+- avg_ticket: total_revenue ÷ transactions (venta promedio por ticket/comanda)
+- avg_cover: total_revenue ÷ total_covers (venta promedio por cubierto/comensal)
+Si el documento ya trae estos promedios calculados, usá los valores del documento.
+Si no están, calculalos vos con las fórmulas de arriba.
+
 Respondé ÚNICAMENTE con este JSON válido (todos los valores numéricos sin formato, sin puntos ni comas de miles):
 {
   "confidence": número 0-100,
@@ -56,7 +64,7 @@ Respondé ÚNICAMENTE con este JSON válido (todos los valores numéricos sin fo
 Reglas:
 - top_sellers: máximo 10 productos, ordenados por revenue descendente
 - Todos los montos en la moneda del documento, sin formato (1234.56 no 1.234,56)
-- Si un campo no aparece en el documento, poné null
+- Si un campo no aparece en el documento y no se puede calcular, poné null
 - No agregues campos extra fuera de este schema`
 
 export async function POST(req: Request) {
@@ -126,7 +134,13 @@ export async function POST(req: Request) {
     const days = extracted.days || []
 
     for (const day of days) {
-      // Compute avg_cover server-side if not in response but we have the data
+      // Compute derived metrics server-side as fallback if OCR didn't return them.
+      // Definitions: avg_ticket = revenue/transactions, avg_cover = revenue/covers
+      const avgTicket = day.avg_ticket ?? (
+        day.total_revenue && day.transactions && day.transactions > 0
+          ? Math.round((day.total_revenue / day.transactions) * 100) / 100
+          : null
+      )
       const avgCover = day.avg_cover ?? (
         day.total_revenue && day.total_covers && day.total_covers > 0
           ? Math.round((day.total_revenue / day.total_covers) * 100) / 100
@@ -143,7 +157,7 @@ export async function POST(req: Request) {
           total_revenue: day.total_revenue,
           transactions: day.transactions,
           total_covers: day.total_covers,
-          avg_ticket: day.avg_ticket,
+          avg_ticket: avgTicket,
           avg_cover: avgCover,
           salon_sales: day.salon_sales,
           delivery_sales: day.delivery_sales,

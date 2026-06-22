@@ -16,7 +16,7 @@ export default async function OperacionesPage() {
 
   const { data: operations } = await supabase
     .from('daily_operations')
-    .select('id, operation_date, shift, total_revenue, transactions, total_covers, avg_ticket, avg_cover, salon_sales, delivery_sales, complimentary_amount, credit_notes_amount, cancellations_amount, cash_amount, card_amount, transfer_amount')
+    .select('id, import_id, operation_date, shift, total_revenue, transactions, total_covers, avg_ticket, avg_cover, salon_sales, delivery_sales, complimentary_amount, credit_notes_amount, cancellations_amount, cash_amount, card_amount, transfer_amount')
     .eq('restaurant_id', profile?.restaurant_id)
     .eq('status', 'confirmed')
     .order('operation_date', { ascending: false })
