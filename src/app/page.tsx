@@ -1,12 +1,12 @@
 import Link from 'next/link'
+import Image from 'next/image'
 
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       <nav className="flex items-center justify-between px-8 py-5 border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center font-bold text-sm">M</div>
-          <span className="font-bold text-lg">Margin</span>
+        <div className="flex items-center">
+          <Image src="/logo.png" alt="Margin" width={120} height={60} className="object-contain" priority />
         </div>
         <div className="flex items-center gap-4">
           <Link href="/login" className="text-slate-400 hover:text-white text-sm transition-colors">Iniciar sesión</Link>

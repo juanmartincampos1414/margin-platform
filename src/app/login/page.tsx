@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 
 export default function LoginPage() {
@@ -33,7 +34,9 @@ export default function LoginPage() {
     <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-12 h-12 bg-indigo-500 rounded-xl flex items-center justify-center font-bold text-xl mx-auto mb-4">M</div>
+          <div className="flex justify-center mb-4">
+            <Image src="/logo.png" alt="Margin" width={160} height={80} className="object-contain" priority />
+          </div>
           <h1 className="text-2xl font-bold text-white">Bienvenido a Margin</h1>
           <p className="text-slate-400 mt-1 text-sm">Ingresá con tu cuenta</p>
         </div>
